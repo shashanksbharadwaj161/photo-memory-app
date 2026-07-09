@@ -16,13 +16,15 @@ const getReactNativePersistence = (firebaseAuth as any)
 // Create a Web App if you haven't already (it works for React Native too).
 // See SETUP.md for the full walkthrough.
 // ─────────────────────────────────────────────────────────────
+// For Firebase JS SDK v7.20.0 and later, measurementId is optional
 const firebaseConfig = {
-  apiKey: 'PASTE_YOUR_API_KEY',
-  authDomain: 'PASTE_YOUR_AUTH_DOMAIN',
-  projectId: 'PASTE_YOUR_PROJECT_ID',
-  storageBucket: 'PASTE_YOUR_STORAGE_BUCKET',
-  messagingSenderId: 'PASTE_YOUR_MESSAGING_SENDER_ID',
-  appId: 'PASTE_YOUR_APP_ID',
+  apiKey: "AIzaSyCIuEbVGcaBFd_qC8Ugoqj7VSu7BuIYaLg",
+  authDomain: "locket-ddeff.firebaseapp.com",
+  projectId: "locket-ddeff",
+  storageBucket: "locket-ddeff.firebasestorage.app",
+  messagingSenderId: "425239617252",
+  appId: "1:425239617252:web:73d1915c1514868425d6f1",
+  measurementId: "G-ZMP53RH5WG"
 };
 // ─────────────────────────────────────────────────────────────
 
