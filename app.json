@@ -1,0 +1,94 @@
+{
+  "expo": {
+    "name": "Locket",
+    "slug": "locket-memory-book",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "scheme": "locket",
+    "userInterfaceStyle": "dark",
+    "backgroundColor": "#1A1410",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#1A1410"
+    },
+    "assetBundlePatterns": ["**/*"],
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.locket.memorybook",
+      "infoPlist": {
+        "NSCameraUsageDescription": "Locket uses the camera so you can capture memories for your shared book.",
+        "NSPhotoLibraryUsageDescription": "Locket needs photo access to import pictures into your book.",
+        "NSPhotoLibraryAddUsageDescription": "Locket saves your memories back to your photo library when you export them.",
+        "NSMicrophoneUsageDescription": "Locket uses the microphone only while the camera is open."
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#1A1410"
+      },
+      "package": "com.locket.memorybook",
+      "permissions": [
+        "CAMERA",
+        "READ_EXTERNAL_STORAGE",
+        "WRITE_EXTERNAL_STORAGE",
+        "RECEIVE_BOOT_COMPLETED",
+        "VIBRATE",
+        "RECORD_AUDIO"
+      ]
+    },
+    "plugins": [
+      "expo-router",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Locket uses the camera so you can capture memories for your shared book.",
+          "microphonePermission": "Locket uses the microphone only while the camera is open.",
+          "recordAudioAndroid": false
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Locket needs photo access to import pictures into your book."
+        }
+      ],
+      [
+        "expo-media-library",
+        {
+          "photosPermission": "Locket saves your memories back to your photo library when you export them.",
+          "savePhotosPermission": "Locket saves your memories back to your photo library when you export them.",
+          "isAccessMediaLocationEnabled": true
+        }
+      ],
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/notification-icon.png",
+          "color": "#C9A96E",
+          "sounds": []
+        }
+      ],
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "compileSdkVersion": 34,
+            "targetSdkVersion": 34,
+            "minSdkVersion": 24
+          }
+        }
+      ]
+    ],
+    "experiments": {
+      "typedRoutes": true
+    },
+    "extra": {
+      "eas": {
+        "projectId": "PASTE_YOUR_EAS_PROJECT_ID"
+      }
+    }
+  }
+}
