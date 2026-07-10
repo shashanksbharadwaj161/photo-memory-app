@@ -8,7 +8,8 @@ that feels like flipping through a physical album. Memories resurface over time
 > Instagram's camera quality · Moleskine's physical feel · a letter from your
 > grandmother's attic.
 
-Built with **React Native · Expo SDK 51 · Expo Router · Firebase**.
+Built with **React Native · Expo SDK 51 · Expo Router · Firebase (Auth +
+Firestore) · Cloudinary (photo storage)**.
 
 ---
 
@@ -17,6 +18,7 @@ Built with **React Native · Expo SDK 51 · Expo Router · Firebase**.
 ```bash
 npm install
 # paste your Firebase config into lib/firebase.ts (see SETUP.md)
+# paste your Cloudinary cloud name + upload preset into lib/storage.ts
 npm start
 ```
 
@@ -57,12 +59,11 @@ app/                 Expo Router screens
   postcard.tsx       Postcard composer (modal)
   settings.tsx       Profile & book settings (modal)
 components/          Reusable UI (FilteredImage, BookPage, PostcardLayout, …)
-lib/                 firebase, book (Firestore), storage, filters, notifications, memories
+lib/                 firebase (Auth+Firestore), book (Firestore), storage (Cloudinary), filters, notifications, memories
 hooks/               useAuth, useBook, useCamera, useFilters
 constants/           colors, fonts, filters
 assets/              Generated icons, splash, grain & paper textures
 firestore.rules      Firestore security rules
-storage.rules        Storage security rules
 generate-assets.js   Regenerates all image assets with sharp
 ```
 
@@ -77,5 +78,14 @@ vignette — so the camera preview, the book, memories, and postcards all render
 identically. The intensity slider interpolates between the identity matrix and
 the filter matrix. On the live camera preview a colour tint approximates the
 selected filter; the real colour matrix is baked in the moment you capture.
+
+## Notes on photo storage
+
+Photos upload directly from the device to **Cloudinary** using an unsigned
+upload preset (`lib/storage.ts`) — no server or API secret required. Firebase
+is used only for **Auth** and **Firestore** (accounts, books, photo metadata
+and the Cloudinary `secure_url`s). Because unsigned uploads can't delete
+assets client-side, removing a photo in Locket deletes its Firestore record
+immediately; see `SETUP.md` for pruning orphaned Cloudinary assets.
 
 See **[SETUP.md](./SETUP.md)** for the full build & deployment guide.

@@ -38,7 +38,6 @@ const firebaseConfig = {
   apiKey: "…",
   authDomain: "…",
   projectId: "…",
-  storageBucket: "…",
   messagingSenderId: "…",
   appId: "…",
 };
@@ -55,27 +54,61 @@ In the Firebase console:
 
 - **Authentication** → Get started → **Email/Password** → Enable.
 - **Firestore Database** → Create database → Start in production mode → pick a region.
-- **Storage** → Get started → Start in production mode.
+
+Locket does **not** use Firebase Storage — photos are uploaded to Cloudinary
+instead (see step 4 below), so there's nothing to enable here for photos.
 
 ### Deploy the security rules
 
-The repo ships hardened rules in `firestore.rules` and `storage.rules`. Deploy
-them with the Firebase CLI:
+The repo ships hardened Firestore rules in `firestore.rules`. Deploy them with
+the Firebase CLI:
 
 ```bash
 npm install -g firebase-tools
 firebase login
 firebase use --add        # select your project
-firebase deploy --only firestore:rules,storage
+firebase deploy --only firestore:rules
 ```
 
-(Or paste the contents of each file into the console's Rules tabs.)
+(Or paste the file's contents into the console's Firestore Rules tab.)
 
 No composite indexes are required — every query uses a single field.
 
 ---
 
-## 4. Create an Expo account & link the project
+## 4. Create a Cloudinary account (2 minutes)
+
+Locket uploads photos to [Cloudinary](https://cloudinary.com) using an
+**unsigned upload preset** — no server or API secret ever touches the app.
+
+1. Sign up at [cloudinary.com](https://cloudinary.com) (free tier is plenty).
+2. On your Dashboard, copy your **Cloud name**.
+3. Go to **Settings → Upload → Upload presets → Add upload preset**:
+   - Set **Signing Mode** to **Unsigned**.
+   - (Optional) Set a folder or restrict allowed formats to images.
+   - Save, and copy the preset's **name**.
+
+### Paste your credentials
+
+Open **`lib/storage.ts`** and replace the placeholder values:
+
+```ts
+const CLOUDINARY_CLOUD_NAME = "…";
+const CLOUDINARY_UPLOAD_PRESET = "…";
+```
+
+Until you do this, adding a photo shows a friendly error asking you to finish
+this step instead of failing silently.
+
+> **Note:** Unsigned uploads have no client-side delete permission (that
+> requires your API secret, which must never ship in the app). Removing a
+> photo in Locket deletes it from the shared book immediately; to also free
+> up Cloudinary storage, prune unused assets from the Cloudinary Media
+> Library dashboard occasionally, or wire up a small server-side job later.
+
+---
+
+## 5. Create an Expo account & link the project
 
 1. Sign up at [expo.dev](https://expo.dev) (free).
 2. Log in and link the project (this fills in your EAS project id):
@@ -88,7 +121,7 @@ eas init            # writes extra.eas.projectId into app.json
 
 ---
 
-## 5. Build the Android APK
+## 6. Build the Android APK
 
 ```bash
 eas build --platform android --profile preview
@@ -104,7 +137,7 @@ This runs on Expo's servers (~10 minutes) and prints a download link for the
 
 ---
 
-## 6. Connect with your partner
+## 7. Connect with your partner
 
 1. Open Locket → **Create account**.
 2. Choose **Start a new book** → you'll get a 6-character invite code.

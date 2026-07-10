@@ -1,52 +1,107 @@
-import { ref, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
 import * as FileSystem from 'expo-file-system';
 import * as MediaLibrary from 'expo-media-library';
-import { storage } from './firebase';
 
-/**
- * Read a local file URI into a Blob. On React Native `fetch(uri).blob()` is the
- * supported path for turning a file:// URI into uploadable bytes.
- */
-async function uriToBlob(localUri: string): Promise<Blob> {
-  const response = await fetch(localUri);
-  if (!response.ok) {
-    throw new Error('Could not read the selected image.');
-  }
-  return await response.blob();
+// ─────────────────────────────────────────────────────────────
+// PASTE YOUR CLOUDINARY CREDENTIALS HERE
+// Cloudinary Console → Dashboard → "Cloud name".
+// Settings → Upload → Upload presets → Add upload preset → Signing mode:
+// "Unsigned". No API key/secret is ever needed on-device.
+// ─────────────────────────────────────────────────────────────
+const CLOUDINARY_CLOUD_NAME = 'PASTE_YOUR_CLOUD_NAME';
+const CLOUDINARY_UPLOAD_PRESET = 'PASTE_YOUR_UPLOAD_PRESET';
+// ─────────────────────────────────────────────────────────────
+
+/** True until the developer replaces the placeholder credentials above. */
+export const isCloudinaryConfigured =
+  !CLOUDINARY_CLOUD_NAME.startsWith('PASTE_') && !CLOUDINARY_UPLOAD_PRESET.startsWith('PASTE_');
+
+function uploadUrl(): string {
+  return `https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD_NAME}/image/upload`;
+}
+
+interface CloudinaryUploadResponse {
+  secure_url?: string;
+  error?: { message?: string };
+  [key: string]: unknown;
+}
+
+function guessMimeType(filename: string): string {
+  const ext = filename.split('.').pop()?.toLowerCase();
+  if (ext === 'png') return 'image/png';
+  if (ext === 'webp') return 'image/webp';
+  if (ext === 'heic' || ext === 'heif') return 'image/heic';
+  return 'image/jpeg';
+}
+
+export interface UploadOptions {
+  /** Cloudinary folder to group this book's photos, e.g. `locket/<bookId>`. */
+  folder?: string;
+  /** Deterministic public id (filename, without extension). */
+  publicId?: string;
 }
 
 /**
- * Upload a local image to Firebase Storage and return its public download URL.
+ * Upload a local image to Cloudinary via an unsigned upload preset (no
+ * server or API secret required) and return its public `secure_url`.
  */
 export async function uploadImageAsync(
-  path: string,
   localUri: string,
-  contentType = 'image/jpeg'
+  options: UploadOptions = {}
 ): Promise<string> {
-  const blob = await uriToBlob(localUri);
-  const storageRef = ref(storage, path);
-  await uploadBytes(storageRef, blob, { contentType });
-  return await getDownloadURL(storageRef);
-}
-
-/**
- * Build a deterministic storage path for a book photo.
- */
-export function photoStoragePath(bookId: string, uid: string, suffix = ''): string {
-  return `photos/${bookId}/${Date.now()}_${uid}${suffix}.jpg`;
-}
-
-/**
- * Best-effort delete of a previously uploaded file by its download URL.
- * Never throws — deletion failures should not block the user.
- */
-export async function deleteImageByUrl(url: string): Promise<void> {
-  try {
-    const storageRef = ref(storage, url);
-    await deleteObject(storageRef);
-  } catch {
-    // Object may already be gone or be an external URL — ignore.
+  if (!isCloudinaryConfigured) {
+    throw new Error(
+      'Cloudinary is not configured — paste your cloud name and upload preset into lib/storage.ts.'
+    );
   }
+
+  const filename = localUri.split('/').pop() || `photo_${Date.now()}.jpg`;
+
+  const form = new FormData();
+  // React Native's fetch/FormData accepts this { uri, name, type } shape for files.
+  form.append('file', {
+    uri: localUri,
+    name: filename,
+    type: guessMimeType(filename),
+  } as unknown as Blob);
+  form.append('upload_preset', CLOUDINARY_UPLOAD_PRESET);
+  if (options.folder) form.append('folder', options.folder);
+  if (options.publicId) form.append('public_id', options.publicId);
+
+  const response = await fetch(uploadUrl(), {
+    method: 'POST',
+    body: form,
+  });
+
+  const data = (await response.json().catch(() => ({}))) as CloudinaryUploadResponse;
+
+  if (!response.ok || !data.secure_url) {
+    throw new Error(data.error?.message || 'Could not upload the photo. Please try again.');
+  }
+
+  return data.secure_url;
+}
+
+/** Build a deterministic Cloudinary folder for a book's photos. */
+export function photoFolder(bookId: string): string {
+  return `locket/${bookId}`;
+}
+
+/** Build a deterministic Cloudinary public id for a book photo. */
+export function photoPublicId(bookId: string, uid: string, suffix = ''): string {
+  return `${Date.now()}_${uid}${suffix}`;
+}
+
+/**
+ * Best-effort delete of a previously uploaded image.
+ *
+ * Deleting a Cloudinary asset requires a signed request (your API secret),
+ * which must never ship inside the app — so with unsigned, client-only
+ * uploads this intentionally does nothing. The Firestore document is still
+ * removed by `deletePhoto` in lib/book.ts; prune orphaned Cloudinary assets
+ * from the dashboard or a scheduled server job if you need to reclaim space.
+ */
+export async function deleteImageByUrl(_url: string): Promise<void> {
+  // No-op — see doc comment above.
 }
 
 /**

@@ -18,7 +18,7 @@ import {
   Timestamp,
 } from 'firebase/firestore';
 import { db } from './firebase';
-import { uploadImageAsync, photoStoragePath, deleteImageByUrl } from './storage';
+import { uploadImageAsync, photoFolder, photoPublicId, deleteImageByUrl } from './storage';
 
 // ─── Types ───────────────────────────────────────────────────
 
@@ -246,9 +246,13 @@ export async function addPhotoToBook(input: AddPhotoInput): Promise<string> {
     postcardMessage,
   } = input;
 
-  const url = await uploadImageAsync(photoStoragePath(bookId, uid), localUri);
+  const folder = photoFolder(bookId);
+  const url = await uploadImageAsync(localUri, {
+    folder,
+    publicId: photoPublicId(bookId, uid),
+  });
   const thumbnailUrl = thumbnailUri
-    ? await uploadImageAsync(photoStoragePath(bookId, uid, '_thumb'), thumbnailUri)
+    ? await uploadImageAsync(thumbnailUri, { folder, publicId: photoPublicId(bookId, uid, '_thumb') })
     : url;
 
   // Firestore rejects `undefined`, so only include postcardMessage when present.

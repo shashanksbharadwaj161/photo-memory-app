@@ -2,7 +2,6 @@ import { initializeApp, getApps, getApp } from 'firebase/app';
 import { initializeAuth, getAuth, type Auth, type Persistence } from 'firebase/auth';
 import * as firebaseAuth from 'firebase/auth';
 import { getFirestore } from 'firebase/firestore';
-import { getStorage } from 'firebase/storage';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 // `getReactNativePersistence` ships in Firebase's react-native build (which Metro
@@ -21,7 +20,6 @@ const firebaseConfig = {
   apiKey: "AIzaSyCIuEbVGcaBFd_qC8Ugoqj7VSu7BuIYaLg",
   authDomain: "locket-ddeff.firebaseapp.com",
   projectId: "locket-ddeff",
-  storageBucket: "locket-ddeff.firebasestorage.app",
   messagingSenderId: "425239617252",
   appId: "1:425239617252:web:73d1915c1514868425d6f1",
   measurementId: "G-ZMP53RH5WG"
@@ -49,5 +47,4 @@ try {
 
 export const auth = _auth;
 export const db = getFirestore(app);
-export const storage = getStorage(app);
 export default app;
