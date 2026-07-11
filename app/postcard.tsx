@@ -34,6 +34,7 @@ import {
 } from '@/lib/book';
 import { sendPostcardNotification } from '@/lib/notifications';
 import { isClaudeAvailable, suggestPostcardMessage, getCaptionHistory } from '@/lib/claude';
+import { friendlyErrorMessage } from '@/lib/errors';
 import { resolvePhotoFilter } from '@/lib/filters';
 import { PostcardLayout } from '@/components/PostcardLayout';
 import { GoldButton } from '@/components/GoldButton';
@@ -52,6 +53,7 @@ export default function PostcardScreen() {
   const [notFound, setNotFound] = useState(false);
   const [claudeOn, setClaudeOn] = useState(false);
   const [suggesting, setSuggesting] = useState(false);
+  const [sendError, setSendError] = useState<string | null>(null);
 
   useEffect(() => {
     isClaudeAvailable().then(setClaudeOn).catch(() => {});
@@ -105,6 +107,7 @@ export default function PostcardScreen() {
   const doSend = async () => {
     if (!photo || !user || !bookId || !partner) return;
     setSending(true);
+    setSendError(null);
     try {
       const profile = await getUserProfile(user.uid);
       const senderName = user.displayName || profile?.displayName || 'Me';
@@ -129,7 +132,9 @@ export default function PostcardScreen() {
       send.value = withTiming(1, { duration: 620 }, (finished) => {
         if (finished) runOnJS(close)();
       });
-    } catch {
+    } catch (err) {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(() => {});
+      setSendError(friendlyErrorMessage(err, "Couldn't send that postcard. Please try again."));
       setSending(false);
     }
   };
@@ -224,6 +229,7 @@ export default function PostcardScreen() {
             {"Tap to flip · write on the back"}
           </Text>
         </Pressable>
+        {sendError && <Text style={styles.sendError}>{sendError}</Text>}
         <GoldButton
           label={partner ? `Send to ${partner.name} ❤` : 'Waiting for your partner…'}
           icon="paper-plane"
@@ -313,6 +319,12 @@ const styles = StyleSheet.create({
     fontFamily: Fonts.serifItalic,
     fontSize: 14,
     color: Colors.textMuted,
+  },
+  sendError: {
+    fontFamily: Fonts.serif,
+    fontSize: 13,
+    color: Colors.error,
+    textAlign: 'center',
   },
   center: {
     flex: 1,

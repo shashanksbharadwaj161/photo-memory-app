@@ -349,6 +349,9 @@ export default function BookScreen() {
             onViewableItemsChanged={onViewRef.current}
             viewabilityConfig={viewConfigRef.current}
             getItemLayout={(_, i) => ({ length: width, offset: width * i, index: i })}
+            windowSize={3}
+            maxToRenderPerBatch={3}
+            removeClippedSubviews
             onScrollToIndexFailed={({ index: i }) => {
               setTimeout(() => listRef.current?.scrollToIndex({ index: i, animated: false }), 120);
             }}

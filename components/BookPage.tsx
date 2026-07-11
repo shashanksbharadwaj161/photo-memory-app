@@ -66,7 +66,7 @@ export function BookPage({
     <Pressable
       style={[styles.page, { width, height }]}
       onLongPress={onLongPressBackground}
-      delayLongPress={320}
+      delayLongPress={500}
     >
       {/* Subtle paper fibre texture */}
       <View pointerEvents="none" style={styles.paper}>
@@ -86,7 +86,7 @@ export function BookPage({
         <Pressable
           onPress={onPressPhoto}
           onLongPress={onLongPress}
-          delayLongPress={280}
+          delayLongPress={500}
           style={styles.frame}
         >
           <FilteredImage

@@ -19,6 +19,7 @@ import { FilterDefinition } from '@/constants/filters';
 import { useAuth } from '@/hooks/useAuth';
 import { useBook } from '@/hooks/useBook';
 import { savePreset } from '@/lib/presets';
+import { friendlyErrorMessage } from '@/lib/errors';
 import { PARTNER_COLORS, getUserProfile } from '@/lib/book';
 import {
   subscribeToFilterSession,
@@ -123,6 +124,7 @@ export default function FilterBuilderScreen() {
   const [showSave, setShowSave] = useState(false);
   const [name, setName] = useState('');
   const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const throttleRef = useRef<number>(0);
 
   const previewUri = params.previewUri || photos[photos.length - 1]?.url || '';
@@ -201,6 +203,7 @@ export default function FilterBuilderScreen() {
   const doSave = async () => {
     if (!name.trim()) return;
     setSaving(true);
+    setSaveError(null);
     try {
       const preset: FilterDefinition = {
         id: `custom_${Date.now()}`,
@@ -216,6 +219,8 @@ export default function FilterBuilderScreen() {
       await savePreset(preset);
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
       router.back();
+    } catch (err) {
+      setSaveError(friendlyErrorMessage(err, "Couldn't save this filter. Please try again."));
     } finally {
       setSaving(false);
     }
@@ -314,6 +319,7 @@ export default function FilterBuilderScreen() {
           autoFocus
           maxLength={24}
         />
+        {saveError && <Text style={styles.saveError}>{saveError}</Text>}
         <GoldButton
           label="Save"
           onPress={doSave}
@@ -402,5 +408,10 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: Colors.separator,
     paddingVertical: 10,
+  },
+  saveError: {
+    ...Typography.bodyMuted,
+    color: Colors.error,
+    marginTop: 10,
   },
 });

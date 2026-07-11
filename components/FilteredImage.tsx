@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   Image,
   StyleSheet,
@@ -7,6 +7,7 @@ import {
   ViewStyle,
   ImageResizeMode,
 } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import { ColorMatrix, Matrix } from 'react-native-color-matrix-image-filters';
 import { FilterDefinition, getFilterById } from '@/constants/filters';
 import { matrixForFilter } from '@/lib/filters';
@@ -49,17 +50,30 @@ export function FilteredImage({
   vignette = true,
   filter: filterOverride,
 }: FilteredImageProps) {
+  const [failed, setFailed] = useState(false);
+  useEffect(() => setFailed(false), [uri]);
   const filter = filterOverride ?? getFilterById(filterId);
   const clamped = Math.max(0, Math.min(1, intensity));
   const identity = filter.id === 'none' || clamped <= 0;
   const matrix = matrixForFilter(filter, clamped);
 
-  const image = <Image source={{ uri }} resizeMode={resizeMode} style={styles.fill} />;
+  const image = (
+    <Image
+      source={{ uri }}
+      resizeMode={resizeMode}
+      style={styles.fill}
+      onError={() => setFailed(true)}
+    />
+  );
+
+  const showPlaceholder = !uri || failed;
 
   return (
     <View style={[styles.container, { borderRadius: radius }, style]}>
-      {!uri ? (
-        <View style={[styles.fill, styles.placeholder]} />
+      {showPlaceholder ? (
+        <View style={[styles.fill, styles.placeholder]}>
+          {failed && <Ionicons name="image-outline" size={28} color={Colors.textMuted} />}
+        </View>
       ) : identity ? (
         image
       ) : (
@@ -88,5 +102,7 @@ const styles = StyleSheet.create({
   },
   placeholder: {
     backgroundColor: Colors.inkLight,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
 });

@@ -36,6 +36,8 @@ import { GoldButton } from '@/components/GoldButton';
 import { Logo } from '@/components/Logo';
 import { getUserProfile, addPhotoToBook, PARTNER_COLORS } from '@/lib/book';
 import { isClaudeAvailable, suggestCaption, finishSentence, saveCaptionToHistory, getCaptionHistory } from '@/lib/claude';
+import { friendlyErrorMessage } from '@/lib/errors';
+import { BreathingDot } from '@/components/BreathingDot';
 
 const FLASH_ICON = {
   off: 'flash-off-outline',
@@ -83,9 +85,14 @@ export default function CameraScreen() {
   const [claudeOn, setClaudeOn] = useState(false);
   const [suggesting, setSuggesting] = useState(false);
   const [showFinish, setShowFinish] = useState(false);
+  const [cameraError, setCameraError] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout>>();
 
   const previewEntranceY = useSharedValue(60);
+  const previewStyle = useAnimatedStyle(() => ({
+    transform: [{ translateY: previewEntranceY.value }],
+  }));
 
   useEffect(() => {
     isClaudeAvailable().then(setClaudeOn).catch(() => {});
@@ -100,31 +107,6 @@ export default function CameraScreen() {
   );
 
   const previewHeight = Math.round(height * 0.62);
-
-  // ── Permission gate ────────────────────────────────────────
-  if (!camera.permission) {
-    return (
-      <View style={styles.center}>
-        <ActivityIndicator color={Colors.gold} />
-      </View>
-    );
-  }
-  if (!camera.permission.granted) {
-    return (
-      <View style={[styles.center, { padding: 32 }]}>
-        <Logo size={72} />
-        <Text style={styles.permTitle}>Let's open the camera</Text>
-        <Text style={styles.permBody}>
-          Locket needs camera access so you can capture moments straight into your shared book.
-        </Text>
-        <GoldButton
-          label="Enable camera"
-          onPress={camera.requestPermission}
-          style={{ marginTop: 22, alignSelf: 'stretch' }}
-        />
-      </View>
-    );
-  }
 
   // ── Capture ────────────────────────────────────────────────
   const takePhoto = async () => {
@@ -164,6 +146,7 @@ export default function CameraScreen() {
     setCaptured(null);
     setCaption('');
     setShowFinish(false);
+    setUploadError(null);
     filters.reset();
   };
 
@@ -249,6 +232,7 @@ export default function CameraScreen() {
   const addToBook = async () => {
     if (!captured || !user || !bookId) return;
     setSaving(true);
+    setUploadError(null);
     try {
       const full = await ImageManipulator.manipulateAsync(
         captured.uri,
@@ -284,16 +268,59 @@ export default function CameraScreen() {
         setSuccess(false);
         discard();
       }, 1100);
-    } catch {
-      setSaving(false);
+    } catch (err) {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(() => {});
+      setUploadError(friendlyErrorMessage(err, "Couldn't add this to your book. Please try again."));
     } finally {
       setSaving(false);
     }
   };
 
-  const previewStyle = useAnimatedStyle(() => ({
-    transform: [{ translateY: previewEntranceY.value }],
-  }));
+  // ── Permission gate ────────────────────────────────────────
+  if (!camera.permission) {
+    return (
+      <View style={styles.center}>
+        <ActivityIndicator color={Colors.gold} />
+      </View>
+    );
+  }
+  if (!camera.permission.granted) {
+    return (
+      <View style={[styles.center, { padding: 32 }]}>
+        <Ionicons name="camera-outline" size={64} color={Colors.gold} />
+        <Text style={styles.permTitle}>Camera access needed</Text>
+        <Text style={styles.permBody}>
+          Locket needs your camera to capture memories together.
+        </Text>
+        <GoldButton
+          label="Allow camera access"
+          onPress={camera.requestPermission}
+          style={{ marginTop: 22, alignSelf: 'stretch' }}
+        />
+        <GoldButton
+          label="Import from gallery instead"
+          variant="ghost"
+          onPress={importFromGallery}
+          style={{ marginTop: 12, alignSelf: 'stretch' }}
+        />
+      </View>
+    );
+  }
+  if (cameraError && !captured) {
+    return (
+      <View style={[styles.center, { padding: 32 }]}>
+        <Ionicons name="camera-outline" size={64} color={Colors.textMuted} />
+        <Text style={styles.permTitle}>Camera unavailable</Text>
+        <Text style={styles.permBody}>Import from gallery instead.</Text>
+        <GoldButton
+          label="Import from gallery"
+          icon="images-outline"
+          onPress={importFromGallery}
+          style={{ marginTop: 22, alignSelf: 'stretch' }}
+        />
+      </View>
+    );
+  }
 
   // ── Preview / edit mode ────────────────────────────────────
   if (captured) {
@@ -355,8 +382,16 @@ export default function CameraScreen() {
             {suggesting && <ActivityIndicator size="small" color={Colors.gold} />}
           </View>
 
+          {uploadError && <Text style={styles.uploadError}>{uploadError}</Text>}
+
           <View style={[styles.actionRow, { paddingBottom: insets.bottom + 10 }]}>
-            <GoldButton label="Discard" variant="ghost" onPress={discard} style={styles.actionBtn} />
+            <GoldButton
+              label="Discard"
+              variant="ghost"
+              onPress={discard}
+              disabled={saving}
+              style={styles.actionBtn}
+            />
             <GoldButton
               label="Add to Book"
               icon="add"
@@ -366,6 +401,13 @@ export default function CameraScreen() {
             />
           </View>
         </View>
+
+        {saving && (
+          <View style={styles.savingOverlay} pointerEvents="none">
+            <BreathingDot />
+            <Text style={styles.savingText}>Adding to your book…</Text>
+          </View>
+        )}
 
         {success && (
           <Animated.View entering={ZoomIn} style={styles.successOverlay} pointerEvents="none">
@@ -384,13 +426,14 @@ export default function CameraScreen() {
   return (
     <View style={styles.root}>
       <View style={[styles.viewfinder, { height: previewHeight, marginTop: insets.top + 6 }]}>
-        {active && (
+        {active && !cameraError && (
           <CameraView
             ref={cameraRef}
             style={StyleSheet.absoluteFill}
             facing={camera.facing}
             flash={camera.flash}
             onCameraReady={() => camera.setReady(true)}
+            onMountError={() => setCameraError(true)}
           />
         )}
         {/* Live filter approximation — a soft tint + vignette over the preview */}
@@ -589,6 +632,14 @@ const styles = StyleSheet.create({
   aiHint: {
     ...Typography.labelGold,
   },
+  uploadError: {
+    fontFamily: Fonts.serif,
+    fontSize: 13,
+    color: Colors.error,
+    textAlign: 'center',
+    marginTop: 8,
+    marginHorizontal: 24,
+  },
   actionRow: {
     flexDirection: 'row',
     gap: 12,
@@ -597,6 +648,18 @@ const styles = StyleSheet.create({
   },
   actionBtn: {
     flex: 1,
+  },
+  savingOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: Colors.overlay,
+    gap: 14,
+  },
+  savingText: {
+    fontFamily: Fonts.serifItalic,
+    fontSize: 15,
+    color: Colors.textOnInk,
   },
   successOverlay: {
     ...StyleSheet.absoluteFillObject,

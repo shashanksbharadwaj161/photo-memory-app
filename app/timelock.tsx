@@ -33,6 +33,7 @@ import { BreathingDot } from '@/components/BreathingDot';
 import { FilterSnapshot, getPhoto, deletePhoto, getUserProfile, PARTNER_COLORS } from '@/lib/book';
 import { resolvePhotoFilter } from '@/lib/filters';
 import { createTimeLock, getLockPresets, formatUnlockDate } from '@/lib/timelocks';
+import { friendlyErrorMessage } from '@/lib/errors';
 
 const MAX_MESSAGE = 140;
 const DOT_COUNT = 14; // one dot per ~10 characters
@@ -68,6 +69,7 @@ export default function TimeLockScreen() {
   const [message, setMessage] = useState('');
   const [sealing, setSealing] = useState(false);
   const [sealed, setSealed] = useState(false);
+  const [sealError, setSealError] = useState<string | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -131,6 +133,7 @@ export default function TimeLockScreen() {
   const seal = async () => {
     if (!pending || !user || !bookId || !unlockDate) return;
     setSealing(true);
+    setSealError(null);
     try {
       const profile = await getUserProfile(user.uid);
       await createTimeLock({
@@ -157,8 +160,11 @@ export default function TimeLockScreen() {
 
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
       setSealed(true);
-    } catch {
+    } catch (err) {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(() => {});
+      setSealError(friendlyErrorMessage(err, "Couldn't seal this capsule. Please try again."));
       setSealing(false);
+      setStep(3);
     }
   };
 
@@ -265,6 +271,7 @@ export default function TimeLockScreen() {
               />
             ))}
           </View>
+          {sealError && <Text style={styles.sealError}>{sealError}</Text>}
           <Pressable onPress={() => setStep(4)} style={styles.sealBtn}>
             <WaxSeal size={64} />
           </Pressable>
@@ -446,6 +453,12 @@ const styles = StyleSheet.create({
     ...Typography.label,
     marginTop: 10,
     color: Colors.textMuted,
+  },
+  sealError: {
+    ...Typography.bodyMuted,
+    color: Colors.error,
+    textAlign: 'center',
+    marginBottom: 12,
   },
   sealStage: {
     alignItems: 'center',

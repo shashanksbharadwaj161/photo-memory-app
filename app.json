@@ -34,9 +34,12 @@
         "CAMERA",
         "READ_EXTERNAL_STORAGE",
         "WRITE_EXTERNAL_STORAGE",
+        "READ_MEDIA_IMAGES",
+        "READ_MEDIA_VIDEO",
+        "READ_MEDIA_AUDIO",
         "RECEIVE_BOOT_COMPLETED",
         "VIBRATE",
-        "RECORD_AUDIO"
+        "POST_NOTIFICATIONS"
       ]
     },
     "plugins": [
@@ -52,7 +55,8 @@
       [
         "expo-image-picker",
         {
-          "photosPermission": "Locket needs photo access to import pictures into your book."
+          "photosPermission": "Locket needs photo access to import pictures into your book.",
+          "cameraPermission": "Locket needs camera access to take photos."
         }
       ],
       [
@@ -77,7 +81,8 @@
           "android": {
             "compileSdkVersion": 34,
             "targetSdkVersion": 34,
-            "minSdkVersion": 24
+            "minSdkVersion": 24,
+            "buildToolsVersion": "34.0.0"
           }
         }
       ]

@@ -15,6 +15,7 @@ import {
   increment,
   arrayUnion,
   arrayRemove,
+  writeBatch,
   Timestamp,
 } from 'firebase/firestore';
 import { db } from './firebase';
@@ -106,7 +107,14 @@ export async function createBook(
 ): Promise<{ bookId: string; inviteCode: string }> {
   const inviteCode = makeInviteCode();
   const color = PARTNER_COLORS[0];
-  const bookRef = await addDoc(collection(db, 'books'), {
+  const bookRef = doc(collection(db, 'books'));
+  const userRef = doc(db, 'users', uid);
+
+  // A single atomic batch — either both the book and the user's pointer to it
+  // are written, or neither is. Two separate writes (addDoc then setDoc) could
+  // leave an orphaned book if the second write failed.
+  const batch = writeBatch(db);
+  batch.set(bookRef, {
     name: 'Our Book',
     createdAt: serverTimestamp(),
     members: [uid],
@@ -115,12 +123,11 @@ export async function createBook(
     photoCount: 0,
     inviteCode,
     coverUrl: null,
+    quietPagePhotoId: null,
   });
-  await setDoc(
-    doc(db, 'users', uid),
-    { bookId: bookRef.id, displayName, color },
-    { merge: true }
-  );
+  batch.set(userRef, { bookId: bookRef.id, displayName, color }, { merge: true });
+  await batch.commit();
+
   return { bookId: bookRef.id, inviteCode };
 }
 
@@ -146,16 +153,15 @@ export async function joinBook(
     ? data.memberColors[uid] ?? PARTNER_COLORS[1]
     : pickUnusedColor(Object.values(data.memberColors ?? {}));
 
-  await updateDoc(doc(db, 'books', bookId), {
+  const batch = writeBatch(db);
+  batch.update(doc(db, 'books', bookId), {
     members: arrayUnion(uid),
     [`memberNames.${uid}`]: displayName,
     [`memberColors.${uid}`]: color,
   });
-  await setDoc(
-    doc(db, 'users', uid),
-    { bookId, displayName, color },
-    { merge: true }
-  );
+  batch.set(doc(db, 'users', uid), { bookId, displayName, color }, { merge: true });
+  await batch.commit();
+
   return bookId;
 }
 

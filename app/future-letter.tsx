@@ -22,6 +22,7 @@ import { useBook } from '@/hooks/useBook';
 import { WaxSeal } from '@/components/WaxSeal';
 import { createFutureLetter } from '@/lib/letters';
 import { getLockPresets, formatUnlockDate } from '@/lib/timelocks';
+import { friendlyErrorMessage } from '@/lib/errors';
 
 const RULE_SPACING = 28;
 const RULE_COUNT = 20;
@@ -36,6 +37,7 @@ export default function FutureLetterScreen() {
   const [showPicker, setShowPicker] = useState(false);
   const [sealing, setSealing] = useState(false);
   const [sealed, setSealed] = useState(false);
+  const [sealError, setSealError] = useState<string | null>(null);
 
   const presets = getLockPresets();
   const selfName = user?.displayName || 'me';
@@ -56,12 +58,15 @@ export default function FutureLetterScreen() {
   const seal = async () => {
     if (!user || !bookId || !unlockDate || !content.trim()) return;
     setSealing(true);
+    setSealError(null);
     try {
       await createFutureLetter(bookId, user.uid, selfName, content, unlockDate);
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
       setSealed(true);
       setTimeout(close, 1400);
-    } catch {
+    } catch (err) {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(() => {});
+      setSealError(friendlyErrorMessage(err, "Couldn't seal this letter. Please try again."));
       setSealing(false);
     }
   };
@@ -145,6 +150,8 @@ export default function FutureLetterScreen() {
                 {...(Platform.OS === 'android' ? { display: 'default' } : {})}
               />
             )}
+
+            {sealError && <Text style={styles.sealError}>{sealError}</Text>}
 
             <Pressable
               onPress={seal}
@@ -239,6 +246,12 @@ const styles = StyleSheet.create({
     fontStyle: 'italic',
     fontSize: 13,
     color: Colors.textMuted,
+  },
+  sealError: {
+    fontFamily: 'System',
+    fontSize: 13,
+    color: Colors.error,
+    textAlign: 'center',
   },
   sealBtn: {
     alignSelf: 'center',

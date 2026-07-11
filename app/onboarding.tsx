@@ -21,6 +21,7 @@ import { Logo } from '@/components/Logo';
 import { GoldButton } from '@/components/GoldButton';
 import { useAuth } from '@/hooks/useAuth';
 import { createBook, joinBook } from '@/lib/book';
+import { friendlyErrorMessage } from '@/lib/errors';
 
 type Mode = 'choose' | 'creating' | 'created' | 'join';
 
@@ -39,15 +40,22 @@ export default function Onboarding() {
 
   const displayName = user.displayName || 'Me';
 
-  const startNewBook = async () => {
+  const startNewBook = async (isRetry = false) => {
     setMode('creating');
     setError(null);
     try {
       const { inviteCode: code } = await createBook(user.uid, displayName);
       setInviteCode(code);
       setMode('created');
-    } catch {
-      setError("We couldn't create your book. Check your connection and try again.");
+    } catch (err) {
+      // A fresh Firebase project can take a moment for just-deployed Firestore
+      // rules to propagate — silently retry once before surfacing an error.
+      const code = (err as { code?: string })?.code;
+      if (code === 'permission-denied' && !isRetry) {
+        setTimeout(() => startNewBook(true), 2000);
+        return;
+      }
+      setError(friendlyErrorMessage(err, "We couldn't create your book. Check your connection and try again."));
       setMode('choose');
     }
   };
@@ -80,8 +88,8 @@ export default function Onboarding() {
       }
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
       await refreshBookId();
-    } catch {
-      setError("We couldn't join that book. Check your connection and try again.");
+    } catch (err) {
+      setError(friendlyErrorMessage(err, "We couldn't join that book. Check your connection and try again."));
       setBusy(false);
     }
   };
@@ -110,7 +118,7 @@ export default function Onboarding() {
           <Animated.View entering={FadeIn}>
             <Pressable
               disabled={mode === 'creating'}
-              onPress={startNewBook}
+              onPress={() => startNewBook()}
               style={({ pressed }) => [styles.card, pressed && styles.cardPressed]}
             >
               <Ionicons name="book-outline" size={30} color={Colors.gold} />
