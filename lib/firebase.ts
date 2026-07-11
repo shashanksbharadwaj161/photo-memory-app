@@ -16,10 +16,12 @@ const getReactNativePersistence = (firebaseAuth as any)
 // See SETUP.md for the full walkthrough.
 // ─────────────────────────────────────────────────────────────
 // For Firebase JS SDK v7.20.0 and later, measurementId is optional
+// For Firebase JS SDK v7.20.0 and later, measurementId is optional
 const firebaseConfig = {
   apiKey: "AIzaSyCIuEbVGcaBFd_qC8Ugoqj7VSu7BuIYaLg",
   authDomain: "locket-ddeff.firebaseapp.com",
   projectId: "locket-ddeff",
+  storageBucket: "locket-ddeff.firebasestorage.app",
   messagingSenderId: "425239617252",
   appId: "1:425239617252:web:73d1915c1514868425d6f1",
   measurementId: "G-ZMP53RH5WG"
