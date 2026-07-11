@@ -4,6 +4,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { Colors } from '@/constants/colors';
 import { Fonts } from '@/constants/fonts';
 import { BookPhoto } from '@/lib/book';
+import { resolvePhotoFilter } from '@/lib/filters';
 import { FilteredImage } from './FilteredImage';
 import { PartnerAvatar } from './PartnerAvatar';
 
@@ -32,6 +33,7 @@ export function MemoryCard({ photo, label, height = 360, rotate = 0, onPress }: 
           uri={photo.url}
           filterId={photo.filterId}
           intensity={photo.intensity}
+          filter={resolvePhotoFilter(photo.filterId, photo.filterSnapshot)}
           radius={12}
           style={StyleSheet.absoluteFill}
         />

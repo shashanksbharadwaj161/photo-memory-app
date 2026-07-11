@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useMemo } from 'react';
 import { View, StyleSheet, AppState } from 'react-native';
 import { Tabs, Redirect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
@@ -6,6 +6,7 @@ import { Colors } from '@/constants/colors';
 import { useAuth } from '@/hooks/useAuth';
 import { registerForPushNotifications } from '@/lib/notifications';
 import { touchPresence } from '@/lib/book';
+import { getCurrentSeason, seasonGoldBlend } from '@/lib/seasons';
 
 function TabIcon({
   name,
@@ -42,6 +43,8 @@ export default function AppLayout() {
     };
   }, [user, bookId]);
 
+  const activeTint = useMemo(() => seasonGoldBlend(getCurrentSeason()), []);
+
   if (!user) return <Redirect href={'/(auth)/login' as any} />;
   if (bookResolved && !bookId) return <Redirect href={'/onboarding' as any} />;
 
@@ -50,7 +53,7 @@ export default function AppLayout() {
       screenOptions={{
         headerShown: false,
         tabBarShowLabel: false,
-        tabBarActiveTintColor: Colors.gold,
+        tabBarActiveTintColor: activeTint,
         tabBarInactiveTintColor: Colors.filterUnselected,
         tabBarStyle: styles.tabBar,
       }}
@@ -88,8 +91,8 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.ink,
     borderTopWidth: 1,
     borderTopColor: Colors.separator,
-    height: 64,
-    paddingTop: 6,
+    height: 78,
+    paddingTop: 10,
     elevation: 0,
   },
   iconWrap: {

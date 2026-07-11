@@ -8,8 +8,8 @@ import {
   ImageResizeMode,
 } from 'react-native';
 import { ColorMatrix, Matrix } from 'react-native-color-matrix-image-filters';
-import { getFilterById } from '@/constants/filters';
-import { matrixFor } from '@/lib/filters';
+import { FilterDefinition, getFilterById } from '@/constants/filters';
+import { matrixForFilter } from '@/lib/filters';
 import { Colors } from '@/constants/colors';
 import { GrainOverlay } from './GrainOverlay';
 import { Vignette } from './Vignette';
@@ -23,6 +23,14 @@ interface FilteredImageProps {
   resizeMode?: ImageResizeMode;
   grain?: boolean;
   vignette?: boolean;
+  /**
+   * An already-resolved filter recipe (matrix/grain/vignette). Pass this for
+   * "Mine" presets, which live only in local AsyncStorage — without it, a
+   * partner's device that never saved that preset would fall back to
+   * "Original" instead of rendering the intended look. When omitted, `filterId`
+   * is looked up in the built-in FILTERS list as before.
+   */
+  filter?: FilterDefinition;
 }
 
 /**
@@ -39,11 +47,12 @@ export function FilteredImage({
   resizeMode = 'cover',
   grain = true,
   vignette = true,
+  filter: filterOverride,
 }: FilteredImageProps) {
-  const filter = getFilterById(filterId);
+  const filter = filterOverride ?? getFilterById(filterId);
   const clamped = Math.max(0, Math.min(1, intensity));
   const identity = filter.id === 'none' || clamped <= 0;
-  const matrix = matrixFor(filterId, clamped);
+  const matrix = matrixForFilter(filter, clamped);
 
   const image = <Image source={{ uri }} resizeMode={resizeMode} style={styles.fill} />;
 

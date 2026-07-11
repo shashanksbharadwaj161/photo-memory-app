@@ -17,6 +17,8 @@ import * as Haptics from 'expo-haptics';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors } from '@/constants/colors';
 import { Fonts } from '@/constants/fonts';
+import { Typography } from '@/constants/typography';
+import { Spacing } from '@/constants/spacing';
 import { useAuth } from '@/hooks/useAuth';
 import { useBook } from '@/hooks/useBook';
 import {
@@ -31,7 +33,24 @@ import {
 } from '@/lib/book';
 import { savePhotosToDevice } from '@/lib/storage';
 import { unregisterMemoryTask } from '@/lib/memories';
+import {
+  isClaudeEnabled,
+  setClaudeEnabled,
+  getClaudeApiKey,
+  saveClaudeApiKey,
+  clearClaudeApiKey,
+  isValidClaudeKey,
+} from '@/lib/claude';
+import { getAmbientTimeout, setAmbientTimeout } from '@/lib/ambient';
+import { isQuietSoundEnabled, setQuietSoundEnabled } from '@/lib/quietSound';
 import { PartnerAvatar } from '@/components/PartnerAvatar';
+
+const AMBIENT_OPTIONS: { label: string; ms: number }[] = [
+  { label: 'Off', ms: 0 },
+  { label: '30s', ms: 30000 },
+  { label: '45s', ms: 45000 },
+  { label: '60s', ms: 60000 },
+];
 
 export default function SettingsScreen() {
   const insets = useSafeAreaInsets();
@@ -45,6 +64,15 @@ export default function SettingsScreen() {
   const [notifyPostcards, setNotifyPostcards] = useState(true);
   const [copied, setCopied] = useState(false);
   const [exporting, setExporting] = useState<{ saved: number; total: number } | null>(null);
+
+  // Claude AI
+  const [claudeEnabled, setClaudeEnabledState] = useState(false);
+  const [apiKey, setApiKey] = useState('');
+  const [keyError, setKeyError] = useState(false);
+
+  // Ambient mode + quiet sound
+  const [ambientMs, setAmbientMs] = useState(45000);
+  const [quietSound, setQuietSoundState] = useState(true);
 
   useEffect(() => {
     if (!user) return;
@@ -62,7 +90,15 @@ export default function SettingsScreen() {
     if (book?.name) setBookName(book.name);
   }, [book?.name]);
 
+  useEffect(() => {
+    isClaudeEnabled().then(setClaudeEnabledState);
+    getClaudeApiKey().then((k) => setApiKey(k ?? ''));
+    getAmbientTimeout().then(setAmbientMs);
+    isQuietSoundEnabled().then(setQuietSoundState);
+  }, []);
+
   const myColor = profile?.color ?? PARTNER_COLORS[0];
+  const keyIsValid = isValidClaudeKey(apiKey);
 
   const saveName = () => {
     if (!user) return;
@@ -101,6 +137,43 @@ export default function SettingsScreen() {
   const togglePostcards = (v: boolean) => {
     setNotifyPostcards(v);
     if (user) setNotificationPrefs(user.uid, { notifyPostcards: v }).catch(() => {});
+  };
+
+  const toggleClaude = (v: boolean) => {
+    setClaudeEnabledState(v);
+    setClaudeEnabled(v).catch(() => {});
+  };
+
+  const commitApiKey = () => {
+    const trimmed = apiKey.trim();
+    if (!trimmed) {
+      setKeyError(false);
+      return;
+    }
+    if (isValidClaudeKey(trimmed)) {
+      setKeyError(false);
+      saveClaudeApiKey(trimmed).catch(() => {});
+    } else {
+      setKeyError(true);
+    }
+  };
+
+  const doClearKey = () => {
+    setApiKey('');
+    setKeyError(false);
+    setClaudeEnabledState(false);
+    clearClaudeApiKey().catch(() => {});
+  };
+
+  const pickAmbient = (ms: number) => {
+    Haptics.selectionAsync().catch(() => {});
+    setAmbientMs(ms);
+    setAmbientTimeout(ms).catch(() => {});
+  };
+
+  const toggleQuietSound = (v: boolean) => {
+    setQuietSoundState(v);
+    setQuietSoundEnabled(v).catch(() => {});
   };
 
   const exportAll = async () => {
@@ -190,7 +263,7 @@ export default function SettingsScreen() {
             </View>
           </View>
 
-          <Text style={[styles.fieldLabel, { marginTop: 16 }]}>Avatar colour</Text>
+          <Text style={[styles.fieldLabel, { marginTop: 18 }]}>Avatar colour</Text>
           <View style={styles.swatchRow}>
             {PARTNER_COLORS.map((c, i) => (
               <Pressable
@@ -219,44 +292,129 @@ export default function SettingsScreen() {
 
         {/* Invite */}
         <Section title="Invite code">
-          <Pressable onPress={copyCode} style={styles.codeRow}>
+          <Pressable onPress={copyCode} style={styles.codeBox}>
             <Text style={styles.code}>{book?.inviteCode ?? '••••••'}</Text>
+          </Pressable>
+          <View style={styles.copyRow}>
+            <Text style={styles.muted}>Share this so your partner can join your book.</Text>
             <View style={styles.copyBtn}>
               <Ionicons
                 name={copied ? 'checkmark-circle' : 'copy-outline'}
-                size={18}
+                size={16}
                 color={copied ? Colors.online : Colors.gold}
               />
               <Text style={styles.copyText}>{copied ? 'Copied' : 'Copy'}</Text>
             </View>
-          </Pressable>
-          <Text style={styles.muted}>
-            Share this with your partner so they can join your book.
-          </Text>
+          </View>
         </Section>
 
         {/* Book */}
         <Section title="Book">
-          <Text style={styles.fieldLabel}>Book name</Text>
-          <TextInput
-            value={bookName}
-            onChangeText={setBookName}
-            onEndEditing={saveBookName}
-            onBlur={saveBookName}
-            placeholder="Our Book"
-            placeholderTextColor={Colors.textMuted}
-            style={styles.inlineInput}
-          />
+          <Row label="Book name" last>
+            <TextInput
+              value={bookName}
+              onChangeText={setBookName}
+              onEndEditing={saveBookName}
+              onBlur={saveBookName}
+              placeholder="Our Book"
+              placeholderTextColor={Colors.textMuted}
+              style={styles.rowInput}
+              textAlign="right"
+            />
+          </Row>
         </Section>
 
         {/* Notifications */}
         <Section title="Notifications">
-          <ToggleRow
-            label="Memory resurfacing"
-            value={notifyMemories}
-            onValueChange={toggleMemories}
-          />
-          <ToggleRow label="Postcard alerts" value={notifyPostcards} onValueChange={togglePostcards} />
+          <Row label="Memory resurfacing">
+            <ToggleSwitch value={notifyMemories} onValueChange={toggleMemories} />
+          </Row>
+          <Row label="Postcard alerts" last>
+            <ToggleSwitch value={notifyPostcards} onValueChange={togglePostcards} />
+          </Row>
+        </Section>
+
+        {/* Display */}
+        <Section title="Display">
+          <Row label="Quiet Page sound" last>
+            <ToggleSwitch value={quietSound} onValueChange={toggleQuietSound} />
+          </Row>
+        </Section>
+
+        {/* Ambient mode */}
+        <Section title="Ambient mode">
+          <Text style={styles.muted}>
+            When the book sits idle, let it drift into a slideshow of your memories.
+          </Text>
+          <View style={styles.ambientRow}>
+            {AMBIENT_OPTIONS.map((opt) => (
+              <Pressable
+                key={opt.label}
+                onPress={() => pickAmbient(opt.ms)}
+                style={[styles.ambientChip, ambientMs === opt.ms && styles.ambientChipActive]}
+              >
+                <Text
+                  style={[styles.ambientChipText, ambientMs === opt.ms && styles.ambientChipTextActive]}
+                >
+                  {opt.label}
+                </Text>
+              </Pressable>
+            ))}
+          </View>
+        </Section>
+
+        {/* Claude AI */}
+        <Section title="Claude AI">
+          <Row label="Enable Claude AI" last={!claudeEnabled}>
+            <Switch
+              value={claudeEnabled}
+              onValueChange={toggleClaude}
+              trackColor={{ true: Colors.gold, false: Colors.inkLight }}
+              thumbColor="#FFFFFF"
+              ios_backgroundColor={Colors.inkLight}
+            />
+          </Row>
+
+          {claudeEnabled && (
+            <View style={styles.claudeBlock}>
+              <View style={styles.claudeKeyHeader}>
+                <Text style={styles.fieldLabel}>API key</Text>
+                {keyIsValid && (
+                  <View style={styles.connectedRow}>
+                    <View style={styles.connectedDot} />
+                    <Text style={styles.connectedText}>Connected</Text>
+                  </View>
+                )}
+              </View>
+              <TextInput
+                value={apiKey}
+                onChangeText={(t) => {
+                  setApiKey(t);
+                  setKeyError(false);
+                }}
+                onBlur={commitApiKey}
+                onEndEditing={commitApiKey}
+                placeholder="sk-ant-…"
+                placeholderTextColor={Colors.textMuted}
+                secureTextEntry
+                autoCapitalize="none"
+                autoCorrect={false}
+                style={styles.inlineInput}
+              />
+              {keyError && <Text style={styles.keyError}>Should start with sk-ant-</Text>}
+
+              <Text style={styles.claudeExplainer}>
+                Your key is stored only on this device. Claude suggests captions, writes memory
+                stories, and helps with postcards. The app works fully without it.
+              </Text>
+
+              {!!apiKey && (
+                <Pressable onPress={doClearKey} hitSlop={8}>
+                  <Text style={styles.clearKey}>Clear key</Text>
+                </Pressable>
+              )}
+            </View>
+          )}
         </Section>
 
         {/* Export */}
@@ -272,7 +430,7 @@ export default function SettingsScreen() {
         </Section>
 
         {/* Account */}
-        <Section title="Account">
+        <Section title="Account" last>
           <Pressable onPress={doSignOut} style={styles.rowBtn}>
             <Ionicons name="log-out-outline" size={20} color={Colors.textOnInk} />
             <Text style={[styles.rowBtnText, { color: Colors.textOnInk }]}>Sign out</Text>
@@ -283,41 +441,64 @@ export default function SettingsScreen() {
           </Pressable>
         </Section>
 
-        <Text style={styles.version}>Locket · v1.0.0</Text>
+        <Text style={styles.version}>Locket · v2.0.0</Text>
       </ScrollView>
     </View>
   );
 }
 
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
+function Section({
+  title,
+  children,
+  last,
+}: {
+  title: string;
+  children: React.ReactNode;
+  last?: boolean;
+}) {
   return (
-    <View style={styles.section}>
-      <Text style={styles.sectionTitle}>{title}</Text>
+    <View style={[styles.section, last && { marginBottom: 8 }]}>
+      <View style={styles.sectionHeader}>
+        <Text style={styles.sectionTitle}>{title}</Text>
+        <View style={styles.sectionRule} />
+      </View>
       <View style={styles.sectionBody}>{children}</View>
     </View>
   );
 }
 
-function ToggleRow({
+function Row({
   label,
+  children,
+  last,
+}: {
+  label: string;
+  children: React.ReactNode;
+  last?: boolean;
+}) {
+  return (
+    <View style={[styles.row, !last && styles.rowRule]}>
+      <Text style={styles.rowLabel}>{label}</Text>
+      <View style={styles.rowValue}>{children}</View>
+    </View>
+  );
+}
+
+function ToggleSwitch({
   value,
   onValueChange,
 }: {
-  label: string;
   value: boolean;
   onValueChange: (v: boolean) => void;
 }) {
   return (
-    <View style={styles.toggleRow}>
-      <Text style={styles.toggleLabel}>{label}</Text>
-      <Switch
-        value={value}
-        onValueChange={onValueChange}
-        trackColor={{ true: Colors.gold, false: Colors.inkLighter }}
-        thumbColor={Platform.OS === 'android' ? (value ? Colors.paper : Colors.textMuted) : undefined}
-        ios_backgroundColor={Colors.inkLighter}
-      />
-    </View>
+    <Switch
+      value={value}
+      onValueChange={onValueChange}
+      trackColor={{ true: Colors.gold, false: Colors.inkLight }}
+      thumbColor={Platform.OS === 'android' ? '#FFFFFF' : undefined}
+      ios_backgroundColor={Colors.inkLight}
+    />
   );
 }
 
@@ -342,53 +523,76 @@ const styles = StyleSheet.create({
     color: Colors.textOnInk,
   },
   scroll: {
-    paddingHorizontal: 18,
-    paddingTop: 8,
+    paddingHorizontal: Spacing.pageMargin,
+    paddingTop: Spacing.lg,
   },
   section: {
-    marginBottom: 22,
+    marginTop: Spacing.xl,
+  },
+  sectionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginBottom: 10,
   },
   sectionTitle: {
-    fontFamily: Fonts.serifItalic,
-    fontSize: 14,
-    color: Colors.gold,
-    marginBottom: 8,
-    marginLeft: 4,
-    letterSpacing: 0.5,
+    ...Typography.labelGold,
   },
-  sectionBody: {
-    backgroundColor: Colors.inkLight,
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: Colors.separator,
-    padding: 16,
+  sectionRule: {
+    flex: 1,
+    height: 0.5,
+    backgroundColor: Colors.separator,
+  },
+  sectionBody: {},
+  row: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 14,
+  },
+  rowRule: {
+    borderBottomWidth: 0.5,
+    borderBottomColor: Colors.separator,
+  },
+  rowLabel: {
+    ...Typography.body,
+    fontSize: 15,
+  },
+  rowValue: {
+    alignItems: 'flex-end',
+  },
+  rowInput: {
+    ...Typography.body,
+    fontSize: 15,
+    color: Colors.textWarm,
+    minWidth: 100,
   },
   profileRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 16,
+    paddingVertical: 10,
   },
   profileFields: {
     flex: 1,
   },
   fieldLabel: {
-    fontFamily: Fonts.serif,
-    fontSize: 13,
-    color: Colors.textMuted,
-    marginBottom: 4,
+    ...Typography.label,
   },
   inlineInput: {
-    fontFamily: Fonts.serif,
+    ...Typography.body,
     fontSize: 17,
-    color: Colors.textOnInk,
-    borderBottomWidth: 1,
+    color: Colors.textWarm,
+    borderBottomWidth: 0.5,
     borderBottomColor: Colors.separator,
-    paddingVertical: 6,
+    paddingVertical: 8,
+    marginTop: 4,
   },
   swatchRow: {
     flexDirection: 'row',
     gap: 12,
-    marginTop: 4,
+    marginTop: 8,
+    paddingBottom: 6,
   },
   swatch: {
     width: 40,
@@ -406,50 +610,107 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 14,
+    paddingVertical: 6,
   },
   partnerName: {
     fontFamily: Fonts.serifBold,
     fontSize: 18,
-    color: Colors.textOnInk,
+    color: Colors.textWarm,
   },
   muted: {
-    fontFamily: Fonts.serif,
-    fontSize: 14,
+    ...Typography.bodyMuted,
     lineHeight: 20,
-    color: Colors.textMuted,
-    marginTop: 8,
   },
-  codeRow: {
+  codeBox: {
+    backgroundColor: Colors.surfaceSunken,
+    borderRadius: Spacing.radiusMd,
+    borderWidth: 1,
+    borderStyle: 'dashed',
+    borderColor: Colors.goldBorder,
+    paddingVertical: 22,
+    alignItems: 'center',
+  },
+  code: {
+    fontFamily: 'Courier New',
+    fontSize: 28,
+    letterSpacing: 8,
+    color: Colors.gold,
+  },
+  copyRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-  },
-  code: {
-    fontFamily: Fonts.serifBold,
-    fontSize: 30,
-    letterSpacing: 6,
-    color: Colors.gold,
+    marginTop: 10,
+    gap: 10,
   },
   copyBtn: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
+    gap: 4,
   },
   copyText: {
-    fontFamily: Fonts.serif,
-    fontSize: 15,
+    ...Typography.labelGold,
+  },
+  ambientRow: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 12,
+  },
+  ambientChip: {
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: Spacing.radiusPill,
+    borderWidth: 1,
+    borderColor: Colors.separator,
+  },
+  ambientChipActive: {
+    borderColor: Colors.gold,
+    backgroundColor: Colors.goldSubtle,
+  },
+  ambientChipText: {
+    ...Typography.body,
+    fontSize: 13,
+    color: Colors.textMuted,
+  },
+  ambientChipTextActive: {
     color: Colors.gold,
   },
-  toggleRow: {
+  claudeBlock: {
+    paddingBottom: 16,
+  },
+  claudeKeyHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  connectedRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingVertical: 8,
+    gap: 6,
   },
-  toggleLabel: {
-    fontFamily: Fonts.serif,
-    fontSize: 16,
-    color: Colors.textOnInk,
+  connectedDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: Colors.online,
+  },
+  connectedText: {
+    ...Typography.label,
+    color: Colors.online,
+  },
+  keyError: {
+    ...Typography.bodyMuted,
+    color: Colors.coral,
+    marginTop: 6,
+  },
+  claudeExplainer: {
+    ...Typography.bodyMuted,
+    lineHeight: 19,
+    marginTop: 14,
+  },
+  clearKey: {
+    ...Typography.labelGold,
+    marginTop: 14,
   },
   rowBtn: {
     flexDirection: 'row',
@@ -467,6 +728,6 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: Colors.textMuted,
     textAlign: 'center',
-    marginTop: 4,
+    marginTop: 30,
   },
 });

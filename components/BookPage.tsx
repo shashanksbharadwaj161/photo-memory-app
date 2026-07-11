@@ -14,6 +14,7 @@ import { format } from 'date-fns';
 import { Colors } from '@/constants/colors';
 import { Fonts } from '@/constants/fonts';
 import { BookPhoto } from '@/lib/book';
+import { resolvePhotoFilter } from '@/lib/filters';
 import { FilteredImage } from './FilteredImage';
 import { PartnerAvatar } from './PartnerAvatar';
 import PAPER from '@/assets/paper-texture.png';
@@ -25,6 +26,8 @@ interface BookPageProps {
   editable?: boolean;
   onPressPhoto?: () => void;
   onLongPress?: () => void;
+  /** Fires when long-pressing the page outside the photo frame (caption/footer/margins). */
+  onLongPressBackground?: () => void;
   onSaveCaption?: (caption: string) => void;
 }
 
@@ -44,6 +47,7 @@ export function BookPage({
   editable = true,
   onPressPhoto,
   onLongPress,
+  onLongPressBackground,
   onSaveCaption,
 }: BookPageProps) {
   const [editing, setEditing] = useState(false);
@@ -59,7 +63,11 @@ export function BookPage({
   };
 
   return (
-    <View style={[styles.page, { width, height }]}>
+    <Pressable
+      style={[styles.page, { width, height }]}
+      onLongPress={onLongPressBackground}
+      delayLongPress={320}
+    >
       {/* Subtle paper fibre texture */}
       <View pointerEvents="none" style={styles.paper}>
         <Image source={PAPER} resizeMode="repeat" style={StyleSheet.absoluteFill} />
@@ -85,6 +93,7 @@ export function BookPage({
             uri={photo.url}
             filterId={photo.filterId}
             intensity={photo.intensity}
+            filter={resolvePhotoFilter(photo.filterId, photo.filterSnapshot)}
             radius={4}
             style={{ width: '100%', height: photoHeight }}
           />
@@ -142,7 +151,7 @@ export function BookPage({
           <PartnerAvatar name={photo.addedByName} color={photo.addedByColor} size={30} />
         </View>
       </View>
-    </View>
+    </Pressable>
   );
 }
 

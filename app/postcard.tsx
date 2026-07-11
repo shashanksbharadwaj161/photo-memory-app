@@ -33,6 +33,8 @@ import {
   PARTNER_COLORS,
 } from '@/lib/book';
 import { sendPostcardNotification } from '@/lib/notifications';
+import { isClaudeAvailable, suggestPostcardMessage, getCaptionHistory } from '@/lib/claude';
+import { resolvePhotoFilter } from '@/lib/filters';
 import { PostcardLayout } from '@/components/PostcardLayout';
 import { GoldButton } from '@/components/GoldButton';
 import { BreathingDot } from '@/components/BreathingDot';
@@ -48,6 +50,12 @@ export default function PostcardScreen() {
   const [message, setMessage] = useState('');
   const [sending, setSending] = useState(false);
   const [notFound, setNotFound] = useState(false);
+  const [claudeOn, setClaudeOn] = useState(false);
+  const [suggesting, setSuggesting] = useState(false);
+
+  useEffect(() => {
+    isClaudeAvailable().then(setClaudeOn).catch(() => {});
+  }, []);
 
   const flip = useSharedValue(0); // 0 = front, 1 = back
   const send = useSharedValue(0); // 0 = resting, 1 = flown away
@@ -79,6 +87,20 @@ export default function PostcardScreen() {
   };
 
   const close = () => router.back();
+
+  const doSuggestMessage = async () => {
+    if (!photo || !partner) return;
+    setSuggesting(true);
+    try {
+      const history = await getCaptionHistory();
+      const text = await suggestPostcardMessage(photo.caption, partner.name, history);
+      if (text) setMessage(text);
+    } catch {
+      // silent — Claude is a nice-to-have
+    } finally {
+      setSuggesting(false);
+    }
+  };
 
   const doSend = async () => {
     if (!photo || !user || !bookId || !partner) return;
@@ -169,6 +191,7 @@ export default function PostcardScreen() {
               photoUri={photo.url}
               filterId={photo.filterId}
               intensity={photo.intensity}
+              filter={resolvePhotoFilter(photo.filterId, photo.filterSnapshot)}
               message={message}
               partnerName={partner?.name ?? 'your partner'}
               width={cardW}
@@ -181,11 +204,14 @@ export default function PostcardScreen() {
               photoUri={photo.url}
               filterId={photo.filterId}
               intensity={photo.intensity}
+              filter={resolvePhotoFilter(photo.filterId, photo.filterSnapshot)}
               message={message}
               onChangeMessage={setMessage}
               partnerName={partner?.name ?? 'your partner'}
               width={cardW}
               height={cardH}
+              onSuggestMessage={claudeOn && partner ? doSuggestMessage : undefined}
+              suggesting={suggesting}
             />
           </Animated.View>
         </Animated.View>

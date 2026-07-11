@@ -168,6 +168,29 @@ of this.
 
 ---
 
+## Optional: Claude AI features
+
+Locket can suggest captions, write "on this day" reflections, draft postcard
+messages, and narrate a month's photos — powered by Claude. This is entirely
+optional and configured **in the app**, not in source:
+
+1. Get an API key at [console.anthropic.com](https://console.anthropic.com).
+2. In Locket, open **Settings → Claude AI**, toggle it on, and paste your key
+   (starts with `sk-ant-`).
+
+Your key is stored only on that device (never committed to the repo, never
+sent anywhere but Anthropic's API). Every Claude feature is skipped silently
+if it's off — the app is fully functional without it.
+
+## Optional: Quiet Page ambient sound
+
+The Quiet Page can loop a soft ambient sound while you're on it. Paste a
+hosted audio URL (e.g. rain, a quiet room tone) into `AMBIENT_SOUND_URL` in
+`lib/quietSound.ts`. Left blank by default — no third-party audio is ever
+fetched until you choose a source.
+
+---
+
 ## Handy scripts
 
 | Command | What it does |

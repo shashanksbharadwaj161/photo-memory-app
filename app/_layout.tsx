@@ -47,7 +47,7 @@ export default function RootLayout() {
       };
       if (data?.type === 'postcard' && data.photoId) {
         router.push(`/(app)/book?focus=${data.photoId}` as any);
-      } else if (data?.type === 'postcard') {
+      } else if (data?.type === 'postcard' || data?.type === 'timelock' || data?.type === 'letter') {
         router.push('/(app)/book' as any);
       }
     });
@@ -80,6 +80,19 @@ export default function RootLayout() {
               name="settings"
               options={{ presentation: 'modal', animation: 'slide_from_bottom' }}
             />
+            <Stack.Screen
+              name="timelock"
+              options={{ presentation: 'modal', animation: 'slide_from_bottom' }}
+            />
+            <Stack.Screen
+              name="future-letter"
+              options={{ presentation: 'modal', animation: 'slide_from_bottom' }}
+            />
+            <Stack.Screen
+              name="filter-builder"
+              options={{ presentation: 'modal', animation: 'slide_from_bottom' }}
+            />
+            <Stack.Screen name="timeline" options={{ animation: 'slide_from_right' }} />
           </Stack>
         </AuthProvider>
       </SafeAreaProvider>

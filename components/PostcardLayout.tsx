@@ -1,8 +1,10 @@
 import React from 'react';
-import { View, Text, TextInput, StyleSheet } from 'react-native';
+import { View, Text, TextInput, Pressable, ActivityIndicator, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors } from '@/constants/colors';
 import { Fonts } from '@/constants/fonts';
+import { Typography } from '@/constants/typography';
+import { FilterDefinition } from '@/constants/filters';
 import { FilteredImage } from './FilteredImage';
 import { Stamp, Postmark } from './Stamp';
 
@@ -10,6 +12,7 @@ interface PostcardLayoutProps {
   photoUri: string;
   filterId: string;
   intensity?: number;
+  filter?: FilterDefinition;
   side: 'front' | 'back';
   message: string;
   onChangeMessage?: (text: string) => void;
@@ -17,12 +20,16 @@ interface PostcardLayoutProps {
   width: number;
   height: number;
   editable?: boolean;
+  /** Shows a "✦ Suggest message" hint below the input when provided. */
+  onSuggestMessage?: () => void;
+  suggesting?: boolean;
 }
 
 export function PostcardLayout({
   photoUri,
   filterId,
   intensity = 1,
+  filter,
   side,
   message,
   onChangeMessage,
@@ -30,6 +37,8 @@ export function PostcardLayout({
   width,
   height,
   editable = true,
+  onSuggestMessage,
+  suggesting,
 }: PostcardLayoutProps) {
   if (side === 'front') {
     return (
@@ -38,6 +47,7 @@ export function PostcardLayout({
           uri={photoUri}
           filterId={filterId}
           intensity={intensity}
+          filter={filter}
           style={{ width: '100%', height: height * 0.62 }}
         />
         <View style={styles.stampSlot}>
@@ -72,6 +82,17 @@ export function PostcardLayout({
             />
           ) : (
             <Text style={styles.message}>{message || 'Write something…'}</Text>
+          )}
+          {onSuggestMessage && (
+            <View style={styles.suggestRow}>
+              {suggesting ? (
+                <ActivityIndicator size="small" color={Colors.goldDark} />
+              ) : (
+                <Pressable onPress={onSuggestMessage} hitSlop={6}>
+                  <Text style={styles.suggestText}>✦ Suggest message</Text>
+                </Pressable>
+              )}
+            </View>
           )}
         </View>
 
@@ -144,6 +165,12 @@ const styles = StyleSheet.create({
   messageSide: {
     flex: 1.15,
     paddingRight: 14,
+  },
+  suggestRow: {
+    marginTop: 4,
+  },
+  suggestText: {
+    ...Typography.labelGold,
   },
   message: {
     flex: 1,

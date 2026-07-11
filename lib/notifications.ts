@@ -116,6 +116,30 @@ export async function sendMemoryNotification(
   });
 }
 
+export async function sendTimeLockNotification(pushToken: string): Promise<void> {
+  if (!pushToken) return;
+  await sendExpoPush({
+    to: pushToken,
+    title: '✨ A time capsule just opened',
+    body: 'Something you locked away is ready to see.',
+    data: { type: 'timelock' },
+    sound: 'default',
+    channelId: 'default',
+  });
+}
+
+export async function sendLetterNotification(pushToken: string): Promise<void> {
+  if (!pushToken) return;
+  await sendExpoPush({
+    to: pushToken,
+    title: '💌 A letter has arrived',
+    body: 'A letter to your future selves is ready to read.',
+    data: { type: 'letter' },
+    sound: 'default',
+    channelId: 'default',
+  });
+}
+
 /** Fire a local "memory surfaced" notification from the on-device background task. */
 export async function presentLocalMemory(title: string, body: string): Promise<void> {
   try {

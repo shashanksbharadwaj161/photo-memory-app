@@ -17,7 +17,7 @@ const STORE_LAST_NOTIFIED = 'locket.memory.lastNotifiedDay';
 // Thresholds we celebrate, in days.
 const THRESHOLDS = [365, 180, 90, 30];
 
-function photoDate(photo: BookPhoto): Date | null {
+export function photoDate(photo: BookPhoto): Date | null {
   if (!photo.createdAt) return null;
   try {
     return photo.createdAt.toDate();
@@ -147,7 +147,7 @@ export function getMemoryLabel(daysAgo: number): string {
 
 // ─── Milestones ──────────────────────────────────────────────
 
-function chronological(photos: BookPhoto[]): BookPhoto[] {
+export function chronological(photos: BookPhoto[]): BookPhoto[] {
   return [...photos]
     .filter((p) => photoDate(p) !== null)
     .sort((a, b) => (photoDate(a)!.getTime() - photoDate(b)!.getTime()));

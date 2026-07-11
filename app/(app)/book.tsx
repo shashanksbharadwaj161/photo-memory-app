@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -25,10 +25,25 @@ import {
   updateCaption,
   toggleFavorite,
   deletePhoto,
+  setQuietPage,
+  fetchUserPushToken,
 } from '@/lib/book';
 import { savePhotoToDevice } from '@/lib/storage';
 import { registerMemoryTask } from '@/lib/memories';
+import {
+  TimeLock,
+  subscribeToTimeLocks,
+  checkAndUnlockTimeLocks,
+} from '@/lib/timelocks';
+import { FutureLetter, subscribeToLetters, checkAndUnlockLetters } from '@/lib/letters';
+import { sendTimeLockNotification, sendLetterNotification } from '@/lib/notifications';
+import { recordInteraction, shouldActivateAmbient } from '@/lib/ambient';
+import { getCurrentSeason, SeasonalTheme } from '@/lib/seasons';
+import { playQuietSound, stopQuietSound } from '@/lib/quietSound';
 import { BookPage } from '@/components/BookPage';
+import { QuietPage } from '@/components/QuietPage';
+import { TimeLockPage } from '@/components/TimeLockPage';
+import { LetterPage } from '@/components/LetterPage';
 import { PageFlip } from '@/components/PageFlip';
 import { PartnerAvatar } from '@/components/PartnerAvatar';
 import { BreathingDot } from '@/components/BreathingDot';
@@ -36,6 +51,22 @@ import { ErrorBar } from '@/components/ErrorBar';
 import { PhotoViewer } from '@/components/PhotoViewer';
 import { BottomSheet, SheetAction } from '@/components/BottomSheet';
 import { Logo } from '@/components/Logo';
+import { RadialBackdrop } from '@/components/RadialBackdrop';
+import { AmbientMode } from '@/components/AmbientMode';
+
+type PageItem =
+  | { kind: 'quiet'; key: string; date: number; photo: BookPhoto }
+  | { kind: 'photo'; key: string; date: number; photo: BookPhoto }
+  | { kind: 'timelock'; key: string; date: number; lock: TimeLock }
+  | { kind: 'letter'; key: string; date: number; letter: FutureLetter };
+
+function tsMillis(ts: { toMillis?: () => number } | null | undefined): number {
+  try {
+    return ts?.toMillis ? ts.toMillis() : 0;
+  } catch {
+    return 0;
+  }
+}
 
 export default function BookScreen() {
   const insets = useSafeAreaInsets();
@@ -47,35 +78,125 @@ export default function BookScreen() {
   );
   const params = useLocalSearchParams<{ focus?: string }>();
 
-  const listRef = useRef<FlatList<BookPhoto>>(null);
+  const listRef = useRef<FlatList<PageItem>>(null);
   const [index, setIndex] = useState(0);
   const [listHeight, setListHeight] = useState(0);
   const [viewer, setViewer] = useState<BookPhoto | null>(null);
   const [sheetPhoto, setSheetPhoto] = useState<BookPhoto | null>(null);
   const [captionPhoto, setCaptionPhoto] = useState<BookPhoto | null>(null);
   const [captionDraft, setCaptionDraft] = useState('');
-  const [revealIndex, setRevealIndex] = useState<number | null>(null);
+  const [revealKey, setRevealKey] = useState<string | null>(null);
+  const [justUnlocked, setJustUnlocked] = useState<Set<string>>(new Set());
+  const [timeLocks, setTimeLocks] = useState<TimeLock[]>([]);
+  const [letters, setLetters] = useState<FutureLetter[]>([]);
+  const [ambientVisible, setAmbientVisible] = useState(false);
+
+  const season = useMemo(() => getCurrentSeason(), []);
+  const seasonTheme = SeasonalTheme[season];
 
   // Keep the on-device "on this day" task pointed at the current book.
   useEffect(() => {
     if (bookId) registerMemoryTask(bookId, partner?.name ?? 'your partner');
   }, [bookId, partner?.name]);
 
+  // Time-locked capsules and letters, streamed live.
+  useEffect(() => {
+    if (!bookId) return;
+    return subscribeToTimeLocks(bookId, setTimeLocks);
+  }, [bookId]);
+  useEffect(() => {
+    if (!bookId) return;
+    return subscribeToLetters(bookId, setLetters);
+  }, [bookId]);
+
+  // On mount, flip any due capsules/letters open and celebrate the first one.
+  useEffect(() => {
+    if (!bookId) return;
+    (async () => {
+      const [unlockedLocks, unlockedLetters] = await Promise.all([
+        checkAndUnlockTimeLocks(bookId),
+        checkAndUnlockLetters(bookId),
+      ]);
+      const ids = new Set<string>();
+      unlockedLocks.forEach((l) => ids.add(`lock-${l.id}`));
+      unlockedLetters.forEach((l) => ids.add(`letter-${l.id}`));
+      if (ids.size === 0) return;
+      setJustUnlocked(ids);
+
+      if (partner) {
+        const token = await fetchUserPushToken(partner.uid).catch(() => null);
+        if (token) {
+          if (unlockedLocks.length > 0) sendTimeLockNotification(token).catch(() => {});
+          if (unlockedLetters.length > 0) sendLetterNotification(token).catch(() => {});
+        }
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [bookId]);
+
   // Deep-link: a tapped postcard notification passes ?focus=<photoId>.
   useEffect(() => {
-    if (!params.focus || photos.length === 0) return;
-    const target = photos.findIndex((p) => p.id === params.focus);
+    if (!params.focus) return;
+    setRevealKey(params.focus);
+  }, [params.focus]);
+
+  // Ambient mode: check idle state every 5s.
+  useEffect(() => {
+    const interval = setInterval(async () => {
+      if (await shouldActivateAmbient()) setAmbientVisible(true);
+    }, 5000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const pageItems = useMemo<PageItem[]>(() => {
+    const items: PageItem[] = [];
+    if (book?.quietPagePhotoId) {
+      const qp = photos.find((p) => p.id === book.quietPagePhotoId);
+      if (qp) items.push({ kind: 'quiet', key: `quiet-${qp.id}`, date: -1, photo: qp });
+    }
+    const regular: PageItem[] = photos.map((p) => ({
+      kind: 'photo',
+      key: p.id,
+      date: tsMillis(p.createdAt),
+      photo: p,
+    }));
+    const locks: PageItem[] = timeLocks.map((l) => ({
+      kind: 'timelock',
+      key: `lock-${l.id}`,
+      date: tsMillis(l.createdAt),
+      lock: l,
+    }));
+    const letterItems: PageItem[] = letters.map((l) => ({
+      kind: 'letter',
+      key: `letter-${l.id}`,
+      date: tsMillis(l.createdAt),
+      letter: l,
+    }));
+    const merged = [...regular, ...locks, ...letterItems].sort((a, b) => a.date - b.date);
+    return [...items, ...merged];
+  }, [photos, timeLocks, letters, book?.quietPagePhotoId]);
+
+  // Scroll to a revealed item once the list knows about it.
+  useEffect(() => {
+    if (!revealKey) return;
+    const target = pageItems.findIndex((p) => p.key === revealKey || p.key.endsWith(revealKey));
     if (target >= 0) {
-      setRevealIndex(target);
       requestAnimationFrame(() => {
         listRef.current?.scrollToIndex({ index: target, animated: true });
       });
     }
-  }, [params.focus, photos]);
+  }, [revealKey, pageItems]);
 
   const onViewRef = useRef(({ viewableItems }: { viewableItems: ViewToken[] }) => {
     if (viewableItems.length > 0 && viewableItems[0].index != null) {
-      setIndex(viewableItems[0].index);
+      const i = viewableItems[0].index;
+      setIndex(i);
+      const item = pageItems[i];
+      if (item?.kind === 'quiet') {
+        playQuietSound().catch(() => {});
+      } else {
+        stopQuietSound().catch(() => {});
+      }
     }
   });
   const viewConfigRef = useRef({ itemVisiblePercentThreshold: 60 });
@@ -119,42 +240,65 @@ export default function BookScreen() {
     );
   };
 
+  const lockInTime = (photo: BookPhoto) => {
+    setSheetPhoto(null);
+    router.push(`/timelock?source=existing&photoId=${photo.id}` as any);
+  };
+
+  const setAsQuietPage = (photo: BookPhoto) => {
+    setSheetPhoto(null);
+    Alert.alert(
+      'Set as the Quiet Page?',
+      'This will become your single quiet page. Your other favorites stay in the book.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Set',
+          onPress: () => {
+            if (bookId) setQuietPage(bookId, photo.id).catch(() => {});
+          },
+        },
+      ]
+    );
+  };
+
+  const writeALetter = () => {
+    setSheetPhoto(null);
+    router.push('/future-letter' as any);
+  };
+
   const pageWidth = width - 44;
   const pageHeight = Math.max(320, listHeight - 44);
+  const partnerForHeader = partner ?? null;
 
   // ── Header ─────────────────────────────────────────────────
   const header = (
     <View style={[styles.header, { paddingTop: insets.top + 8 }]}>
-      <Pressable onPress={() => router.push('/settings' as any)} hitSlop={8} style={styles.headerBtn}>
-        <Ionicons name="ellipsis-horizontal" size={24} color={Colors.gold} />
-      </Pressable>
-
-      <View style={styles.titleWrap}>
-        <Text style={styles.title}>{book?.name ?? 'Locket'}</Text>
-        {partner && (
-          <View style={styles.partnerRow}>
-            <PartnerAvatar name={partner.name} color={partner.color} size={18} online={partnerOnline} />
-            <Text style={styles.partnerText}>
-              {partnerOnline ? `${partner.name} is here` : partner.name}
-            </Text>
+      <View style={styles.headerBrand}>
+        <Logo size={24} />
+      </View>
+      <Pressable onPress={() => router.push('/settings' as any)} hitSlop={10}>
+        {partnerForHeader ? (
+          <PartnerAvatar
+            name={partnerForHeader.name}
+            color={partnerForHeader.color}
+            size={30}
+            online={partnerOnline}
+          />
+        ) : (
+          <View style={styles.selfAvatarFallback}>
+            <Ionicons name="person-outline" size={16} color={Colors.gold} />
           </View>
         )}
-      </View>
-
-      <Pressable
-        onPress={() => router.push('/(app)/camera' as any)}
-        hitSlop={8}
-        style={styles.headerBtn}
-      >
-        <Ionicons name="camera" size={26} color={Colors.gold} />
       </Pressable>
     </View>
   );
 
   // ── Loading ────────────────────────────────────────────────
-  if (loading && photos.length === 0) {
+  if (loading && pageItems.length === 0) {
     return (
-      <View style={styles.root}>
+      <View style={styles.root} onTouchStart={() => recordInteraction()}>
+        <RadialBackdrop seasonTint={seasonTheme.tint} />
         {header}
         <View style={styles.center}>
           <BreathingDot />
@@ -165,9 +309,10 @@ export default function BookScreen() {
   }
 
   // ── Empty ──────────────────────────────────────────────────
-  if (photos.length === 0) {
+  if (pageItems.length === 0) {
     return (
-      <View style={styles.root}>
+      <View style={styles.root} onTouchStart={() => recordInteraction()}>
+        <RadialBackdrop seasonTint={seasonTheme.tint} />
         {header}
         <Animated.View entering={FadeIn} style={styles.empty}>
           <Logo size={92} />
@@ -188,15 +333,16 @@ export default function BookScreen() {
 
   // ── Book ───────────────────────────────────────────────────
   return (
-    <View style={styles.root}>
+    <View style={styles.root} onTouchStart={() => recordInteraction()}>
+      <RadialBackdrop seasonTint={seasonTheme.tint} />
       {header}
 
       <View style={styles.listArea} onLayout={onListLayout}>
         {listHeight > 0 && (
           <FlatList
             ref={listRef}
-            data={photos}
-            keyExtractor={(p) => p.id}
+            data={pageItems}
+            keyExtractor={(p) => p.key}
             horizontal
             pagingEnabled
             showsHorizontalScrollIndicator={false}
@@ -206,32 +352,55 @@ export default function BookScreen() {
             onScrollToIndexFailed={({ index: i }) => {
               setTimeout(() => listRef.current?.scrollToIndex({ index: i, animated: false }), 120);
             }}
-            renderItem={({ item, index: i }) => (
-              <View style={[styles.pageSlot, { width }]}>
-                {/* page-thickness edge */}
-                <View style={styles.pageStack} pointerEvents="none">
-                  <View style={[styles.pageEdge, { opacity: 0.5 }]} />
-                  <View style={[styles.pageEdge, { opacity: 0.3 }]} />
-                  <View style={[styles.pageEdge, { opacity: 0.15 }]} />
+            renderItem={({ item }) => {
+              const unlocked = justUnlocked.has(item.key);
+              return (
+                <View style={[styles.pageSlot, { width }]}>
+                  <View style={styles.pageStackLeft} pointerEvents="none">
+                    {[0.5, 0.35, 0.22, 0.12].map((op, i) => (
+                      <View
+                        key={i}
+                        style={[styles.spineLine, { backgroundColor: seasonTheme.accent, opacity: op }]}
+                      />
+                    ))}
+                  </View>
+                  <View style={styles.pageStackRight} pointerEvents="none">
+                    {[0.5, 0.3, 0.15].map((op, i) => (
+                      <View key={i} style={[styles.pageEdgeLine, { opacity: op }]} />
+                    ))}
+                  </View>
+
+                  <PageFlip play={item.kind === 'photo' && revealKey === item.photo.id} style={styles.pageFlip}>
+                    {item.kind === 'quiet' && (
+                      <QuietPage photo={item.photo} width={pageWidth} height={pageHeight} onPress={() => setViewer(item.photo)} />
+                    )}
+                    {item.kind === 'photo' && (
+                      <BookPage
+                        photo={item.photo}
+                        width={pageWidth}
+                        height={pageHeight}
+                        onPressPhoto={() => setViewer(item.photo)}
+                        onLongPress={() => setSheetPhoto(item.photo)}
+                        onLongPressBackground={writeALetter}
+                        onSaveCaption={(c) => saveCaption(item.photo, c)}
+                      />
+                    )}
+                    {item.kind === 'timelock' && (
+                      <TimeLockPage lock={item.lock} width={pageWidth} height={pageHeight} justUnlocked={unlocked} />
+                    )}
+                    {item.kind === 'letter' && (
+                      <LetterPage letter={item.letter} width={pageWidth} height={pageHeight} justUnlocked={unlocked} />
+                    )}
+                  </PageFlip>
                 </View>
-                <PageFlip play={revealIndex === i} style={styles.pageFlip}>
-                  <BookPage
-                    photo={item}
-                    width={pageWidth}
-                    height={pageHeight}
-                    onPressPhoto={() => setViewer(item)}
-                    onLongPress={() => setSheetPhoto(item)}
-                    onSaveCaption={(c) => saveCaption(item, c)}
-                  />
-                </PageFlip>
-              </View>
-            )}
+              );
+            }}
           />
         )}
 
         <View style={[styles.indicator, { bottom: 10 }]}>
           <Text style={styles.indicatorText}>
-            {index + 1} / {photos.length}
+            {index + 1} · {pageItems.length}
           </Text>
         </View>
       </View>
@@ -244,6 +413,17 @@ export default function BookScreen() {
         visible={!!viewer}
         onClose={() => setViewer(null)}
         onToggleFavorite={onToggleFavorite}
+      />
+
+      {/* Ambient mode */}
+      <AmbientMode
+        visible={ambientVisible}
+        photos={photos}
+        partnerOnline={partnerOnline}
+        onDismiss={() => {
+          setAmbientVisible(false);
+          recordInteraction();
+        }}
       />
 
       {/* Long-press actions */}
@@ -272,6 +452,17 @@ export default function BookScreen() {
                 router.push(`/postcard?photoId=${id}` as any);
               }}
             />
+            <SheetAction
+              icon="lock-closed-outline"
+              label="Lock in time"
+              onPress={() => lockInTime(sheetPhoto)}
+            />
+            <SheetAction
+              icon="star-outline"
+              label="Set as the Quiet Page"
+              onPress={() => setAsQuietPage(sheetPhoto)}
+            />
+            <SheetAction icon="document-text-outline" label="Write a letter" onPress={writeALetter} />
             <SheetAction
               icon={sheetPhoto.isFavorite ? 'heart' : 'heart-outline'}
               label={sheetPhoto.isFavorite ? 'Remove from favourites' : 'Add to favourites'}
@@ -345,34 +536,24 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: 18,
+    paddingHorizontal: 20,
     paddingBottom: 10,
   },
-  headerBtn: {
+  headerBrand: {
     width: 40,
     height: 40,
-    alignItems: 'center',
+    alignItems: 'flex-start',
     justifyContent: 'center',
   },
-  titleWrap: {
+  selfAvatarFallback: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
     alignItems: 'center',
-  },
-  title: {
-    fontFamily: Fonts.serifBold,
-    fontSize: 24,
-    color: Colors.gold,
-    letterSpacing: 0.5,
-  },
-  partnerRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    marginTop: 3,
-  },
-  partnerText: {
-    fontFamily: Fonts.serifItalic,
-    fontSize: 12,
-    color: Colors.textMuted,
+    justifyContent: 'center',
+    backgroundColor: Colors.surface,
+    borderWidth: 1,
+    borderColor: Colors.goldBorder,
   },
   center: {
     flex: 1,
@@ -423,17 +604,27 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  pageStack: {
+  pageStackLeft: {
     position: 'absolute',
-    right: 12,
+    left: 10,
     top: '10%',
     bottom: '10%',
     flexDirection: 'row',
+    gap: 2,
   },
-  pageEdge: {
-    width: 3,
-    marginLeft: 2,
-    borderRadius: 2,
+  spineLine: {
+    width: 1,
+  },
+  pageStackRight: {
+    position: 'absolute',
+    right: 10,
+    top: '10%',
+    bottom: '10%',
+    flexDirection: 'row',
+    gap: 2,
+  },
+  pageEdgeLine: {
+    width: 0.5,
     backgroundColor: Colors.paperDark,
   },
   indicator: {
@@ -441,10 +632,10 @@ const styles = StyleSheet.create({
     alignSelf: 'center',
   },
   indicatorText: {
-    fontFamily: Fonts.serif,
-    fontSize: 13,
-    color: Colors.gold,
+    fontFamily: 'Courier New',
+    fontSize: 11,
     letterSpacing: 1,
+    color: 'rgba(201,169,110,0.8)',
   },
   captionBackdrop: {
     ...StyleSheet.absoluteFillObject,

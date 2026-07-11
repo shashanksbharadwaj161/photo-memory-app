@@ -22,12 +22,27 @@ import { uploadImageAsync, photoFolder, photoPublicId, deleteImageByUrl } from '
 
 // ─── Types ───────────────────────────────────────────────────
 
+export interface FilterSnapshot {
+  matrix: number[];
+  grainOpacity: number;
+  vignetteOpacity: number;
+  vignetteColor: string;
+}
+
 export interface BookPhoto {
   id: string;
   url: string;
   thumbnailUrl: string;
   filterId: string;
   intensity: number; // 0..1 filter strength applied at capture
+  /**
+   * The exact filter recipe used at capture time, present only when filterId
+   * refers to a "Mine" preset (which lives only in the creator's local
+   * AsyncStorage). Without this, a partner's device — which never saved that
+   * preset — would silently fall back to "Original" instead of the intended
+   * look. Built-in filters resolve fine from filterId alone and omit this.
+   */
+  filterSnapshot?: FilterSnapshot;
   caption: string;
   addedBy: string; // user uid
   addedByName: string; // display name
@@ -51,6 +66,7 @@ export interface SharedBook {
   photoCount: number;
   coverUrl?: string | null;
   inviteCode: string; // 6-char code partner uses to join
+  quietPagePhotoId?: string | null;
 }
 
 export interface UserProfile {
@@ -199,6 +215,7 @@ function normalizePhoto(data: any): Omit<BookPhoto, 'id'> {
     thumbnailUrl: data.thumbnailUrl ?? data.url ?? '',
     filterId: data.filterId ?? 'none',
     intensity: typeof data.intensity === 'number' ? data.intensity : 1,
+    filterSnapshot: data.filterSnapshot ?? undefined,
     caption: data.caption ?? '',
     addedBy: data.addedBy ?? '',
     addedByName: data.addedByName ?? 'Someone',
@@ -219,6 +236,8 @@ export interface AddPhotoInput {
   thumbnailUri?: string;
   filterId: string;
   intensity: number;
+  /** Include when filterId is a "Mine" preset — see BookPhoto.filterSnapshot. */
+  filterSnapshot?: FilterSnapshot;
   caption: string;
   uid: string;
   displayName: string;
@@ -236,6 +255,7 @@ export async function addPhotoToBook(input: AddPhotoInput): Promise<string> {
     thumbnailUri,
     filterId,
     intensity,
+    filterSnapshot,
     caption,
     uid,
     displayName,
@@ -255,7 +275,7 @@ export async function addPhotoToBook(input: AddPhotoInput): Promise<string> {
     ? await uploadImageAsync(thumbnailUri, { folder, publicId: photoPublicId(bookId, uid, '_thumb') })
     : url;
 
-  // Firestore rejects `undefined`, so only include postcardMessage when present.
+  // Firestore rejects `undefined`, so only include optional fields when present.
   const photoData: Record<string, any> = {
     url,
     thumbnailUrl,
@@ -274,6 +294,9 @@ export async function addPhotoToBook(input: AddPhotoInput): Promise<string> {
   };
   if (isPostcard && postcardMessage) {
     photoData.postcardMessage = postcardMessage;
+  }
+  if (filterSnapshot) {
+    photoData.filterSnapshot = filterSnapshot;
   }
 
   const photoRef = await addDoc(collection(db, 'books', bookId, 'photos'), photoData);
@@ -313,6 +336,9 @@ export async function addPostcardToBook(
     height: source.height,
     postcardMessage: message.trim(),
   };
+  if (source.filterSnapshot) {
+    photoData.filterSnapshot = source.filterSnapshot;
+  }
   const photoRef = await addDoc(collection(db, 'books', bookId, 'photos'), photoData);
   await updateDoc(doc(db, 'books', bookId), {
     photoCount: increment(1),
@@ -399,6 +425,16 @@ export async function touchPresence(uid: string): Promise<void> {
   } catch {
     // Presence is non-critical.
   }
+}
+
+export async function setQuietPage(bookId: string, photoId: string | null): Promise<void> {
+  await updateDoc(doc(db, 'books', bookId), { quietPagePhotoId: photoId });
+}
+
+export async function getQuietPageId(bookId: string): Promise<string | null> {
+  const snap = await getDoc(doc(db, 'books', bookId));
+  if (!snap.exists()) return null;
+  return (snap.data().quietPagePhotoId as string | null) ?? null;
 }
 
 export async function leaveBook(uid: string, bookId: string): Promise<void> {

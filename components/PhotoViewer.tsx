@@ -24,6 +24,7 @@ import * as Haptics from 'expo-haptics';
 import { Colors } from '@/constants/colors';
 import { Fonts } from '@/constants/fonts';
 import { BookPhoto } from '@/lib/book';
+import { resolvePhotoFilter } from '@/lib/filters';
 import { FilteredImage } from './FilteredImage';
 import { PartnerAvatar } from './PartnerAvatar';
 
@@ -107,6 +108,7 @@ export function PhotoViewer({ photo, visible, onClose, onToggleFavorite }: Photo
             uri={photo.url}
             filterId={photo.filterId}
             intensity={photo.intensity}
+            filter={resolvePhotoFilter(photo.filterId, photo.filterSnapshot)}
             resizeMode="contain"
             grain={false}
             vignette={false}

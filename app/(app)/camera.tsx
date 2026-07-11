@@ -1,4 +1,4 @@
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -12,12 +12,20 @@ import { CameraView } from 'expo-camera';
 import * as ImagePicker from 'expo-image-picker';
 import * as ImageManipulator from 'expo-image-manipulator';
 import * as Haptics from 'expo-haptics';
-import { useFocusEffect } from 'expo-router';
+import { router, useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import Animated, { FadeIn, ZoomIn } from 'react-native-reanimated';
+import Animated, {
+  FadeIn,
+  ZoomIn,
+  useSharedValue,
+  useAnimatedStyle,
+  withSpring,
+} from 'react-native-reanimated';
 import { Ionicons } from '@expo/vector-icons';
+import Svg, { Polygon } from 'react-native-svg';
 import { Colors } from '@/constants/colors';
 import { Fonts } from '@/constants/fonts';
+import { Typography } from '@/constants/typography';
 import { useAuth } from '@/hooks/useAuth';
 import { useCamera } from '@/hooks/useCamera';
 import { useFilters } from '@/hooks/useFilters';
@@ -27,12 +35,35 @@ import { Slider } from '@/components/Slider';
 import { GoldButton } from '@/components/GoldButton';
 import { Logo } from '@/components/Logo';
 import { getUserProfile, addPhotoToBook, PARTNER_COLORS } from '@/lib/book';
+import { isClaudeAvailable, suggestCaption, finishSentence, saveCaptionToHistory, getCaptionHistory } from '@/lib/claude';
 
 const FLASH_ICON = {
   off: 'flash-off-outline',
   on: 'flash',
   auto: 'flash-outline',
 } as const;
+
+function timeOfDayLabel(): string {
+  const h = new Date().getHours();
+  if (h < 6) return 'late night';
+  if (h < 12) return 'morning';
+  if (h < 17) return 'afternoon';
+  if (h < 21) return 'evening';
+  return 'night';
+}
+
+function ApertureStar({ size = 20, color = Colors.ink }: { size?: number; color?: string }) {
+  const points = Array.from({ length: 12 }, (_, i) => {
+    const angle = (Math.PI / 6) * i - Math.PI / 2;
+    const r = i % 2 === 0 ? 48 : 26;
+    return `${50 + r * Math.cos(angle)},${50 + r * Math.sin(angle)}`;
+  }).join(' ');
+  return (
+    <Svg width={size} height={size} viewBox="0 0 100 100">
+      <Polygon points={points} fill={color} />
+    </Svg>
+  );
+}
 
 export default function CameraScreen() {
   const insets = useSafeAreaInsets();
@@ -49,6 +80,16 @@ export default function CameraScreen() {
   const [saving, setSaving] = useState(false);
   const [success, setSuccess] = useState(false);
   const [active, setActive] = useState(true);
+  const [claudeOn, setClaudeOn] = useState(false);
+  const [suggesting, setSuggesting] = useState(false);
+  const [showFinish, setShowFinish] = useState(false);
+  const debounceRef = useRef<ReturnType<typeof setTimeout>>();
+
+  const previewEntranceY = useSharedValue(60);
+
+  useEffect(() => {
+    isClaudeAvailable().then(setClaudeOn).catch(() => {});
+  }, []);
 
   // Only mount the camera while the tab is focused (frees the sensor otherwise).
   useFocusEffect(
@@ -72,7 +113,7 @@ export default function CameraScreen() {
     return (
       <View style={[styles.center, { padding: 32 }]}>
         <Logo size={72} />
-        <Text style={styles.permTitle}>Let’s open the camera</Text>
+        <Text style={styles.permTitle}>Let's open the camera</Text>
         <Text style={styles.permBody}>
           Locket needs camera access so you can capture moments straight into your shared book.
         </Text>
@@ -93,7 +134,9 @@ export default function CameraScreen() {
     try {
       const photo = await cameraRef.current.takePictureAsync({ quality: 0.9 });
       if (photo) {
+        previewEntranceY.value = 60;
         setCaptured({ uri: photo.uri, width: photo.width, height: photo.height });
+        previewEntranceY.value = withSpring(0, { damping: 11, stiffness: 140, mass: 0.7 });
       }
     } catch {
       // ignore — user can retry
@@ -111,14 +154,96 @@ export default function CameraScreen() {
     });
     if (!result.canceled && result.assets[0]) {
       const a = result.assets[0];
+      previewEntranceY.value = 60;
       setCaptured({ uri: a.uri, width: a.width ?? 0, height: a.height ?? 0 });
+      previewEntranceY.value = withSpring(0, { damping: 11, stiffness: 140, mass: 0.7 });
     }
   };
 
   const discard = () => {
     setCaptured(null);
     setCaption('');
+    setShowFinish(false);
     filters.reset();
+  };
+
+  const buildFilterSnapshot = () =>
+    filters.isCustom
+      ? {
+          matrix: filters.selected.matrix,
+          grainOpacity: filters.selected.grainOpacity,
+          vignetteOpacity: filters.selected.vignetteOpacity,
+          vignetteColor: filters.selected.vignetteColor,
+        }
+      : undefined;
+
+  const openTimeLock = () => {
+    if (!captured) return;
+    const snapshot = buildFilterSnapshot();
+    router.push({
+      pathname: '/timelock',
+      params: {
+        source: 'fresh',
+        localUri: captured.uri,
+        filterId: filters.selectedId,
+        intensity: String(filters.intensity),
+        caption,
+        filterSnapshot: snapshot ? JSON.stringify(snapshot) : '',
+      },
+    } as any);
+  };
+
+  const openFilterBuilder = () => {
+    router.push({
+      pathname: '/filter-builder',
+      params: captured ? { previewUri: captured.uri } : {},
+    } as any);
+  };
+
+  const doSuggestCaption = async () => {
+    setSuggesting(true);
+    try {
+      const history = await getCaptionHistory();
+      const text = await suggestCaption(
+        'a moment just captured together',
+        timeOfDayLabel(),
+        filters.selected.name || 'Original',
+        history
+      );
+      if (text) setCaption(text);
+    } catch {
+      // silent — Claude is a nice-to-have
+    } finally {
+      setSuggesting(false);
+    }
+  };
+
+  const doFinishSentence = async () => {
+    setSuggesting(true);
+    setShowFinish(false);
+    try {
+      const history = await getCaptionHistory();
+      const text = await finishSentence(caption, history);
+      if (text) setCaption(text);
+    } catch {
+      // silent
+    } finally {
+      setSuggesting(false);
+    }
+  };
+
+  const onChangeCaption = (text: string) => {
+    setCaption(text);
+    setShowFinish(false);
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => {
+      const trimmed = text.trim();
+      const lastChar = trimmed.slice(-1);
+      const endsWithPunctuation = ['.', '!', '?', '…', ','].includes(lastChar);
+      if (claudeOn && trimmed.length > 5 && !endsWithPunctuation) {
+        setShowFinish(true);
+      }
+    }, 800);
   };
 
   const addToBook = async () => {
@@ -143,6 +268,7 @@ export default function CameraScreen() {
         thumbnailUri: thumb.uri,
         filterId: filters.selectedId,
         intensity: filters.intensity,
+        filterSnapshot: buildFilterSnapshot(),
         caption: caption.trim(),
         uid: user.uid,
         displayName: user.displayName || profile?.displayName || 'Me',
@@ -150,6 +276,7 @@ export default function CameraScreen() {
         width: full.width,
         height: full.height,
       });
+      if (caption.trim()) saveCaptionToHistory(caption.trim()).catch(() => {});
 
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
       setSuccess(true);
@@ -164,6 +291,10 @@ export default function CameraScreen() {
     }
   };
 
+  const previewStyle = useAnimatedStyle(() => ({
+    transform: [{ translateY: previewEntranceY.value }],
+  }));
+
   // ── Preview / edit mode ────────────────────────────────────
   if (captured) {
     return (
@@ -173,10 +304,12 @@ export default function CameraScreen() {
             <Ionicons name="close" size={26} color={Colors.textOnInk} />
           </Pressable>
           <Text style={styles.headerTitle}>New memory</Text>
-          <View style={styles.headerBtn} />
+          <Pressable onPress={openTimeLock} hitSlop={10} style={styles.headerBtn}>
+            <Ionicons name="lock-closed-outline" size={22} color={Colors.gold} />
+          </Pressable>
         </View>
 
-        <Animated.View entering={FadeIn} style={styles.previewArea}>
+        <Animated.View style={[styles.previewArea, previewStyle]}>
           <FilteredImage
             uri={captured.uri}
             filterId={filters.selectedId}
@@ -187,7 +320,7 @@ export default function CameraScreen() {
         </Animated.View>
 
         <View style={styles.editControls}>
-          <FilterStrip selectedId={filters.selectedId} onSelect={filters.select} />
+          <FilterStrip selectedId={filters.selectedId} onSelect={filters.select} onLongPress={openFilterBuilder} />
           {filters.selectedId !== 'none' && (
             <View style={styles.sliderRow}>
               <Ionicons name="contrast-outline" size={16} color={Colors.textMuted} />
@@ -200,13 +333,27 @@ export default function CameraScreen() {
 
           <TextInput
             value={caption}
-            onChangeText={setCaption}
+            onChangeText={onChangeCaption}
             placeholder="Say something…"
             placeholderTextColor={Colors.textMuted}
             style={styles.captionInput}
             maxLength={140}
             multiline
           />
+
+          <View style={styles.aiRow}>
+            {claudeOn && !suggesting && (
+              <Pressable onPress={doSuggestCaption} hitSlop={6}>
+                <Text style={styles.aiHint}>✦ Suggest</Text>
+              </Pressable>
+            )}
+            {showFinish && !suggesting && (
+              <Pressable onPress={doFinishSentence} hitSlop={6}>
+                <Text style={styles.aiHint}>✦ Finish</Text>
+              </Pressable>
+            )}
+            {suggesting && <ActivityIndicator size="small" color={Colors.gold} />}
+          </View>
 
           <View style={[styles.actionRow, { paddingBottom: insets.bottom + 10 }]}>
             <GoldButton label="Discard" variant="ghost" onPress={discard} style={styles.actionBtn} />
@@ -259,7 +406,7 @@ export default function CameraScreen() {
       </View>
 
       <View style={styles.strip}>
-        <FilterStrip selectedId={filters.selectedId} onSelect={filters.select} />
+        <FilterStrip selectedId={filters.selectedId} onSelect={filters.select} onLongPress={openFilterBuilder} />
       </View>
 
       <View style={[styles.controls, { paddingBottom: insets.bottom + 8 }]}>
@@ -269,10 +416,12 @@ export default function CameraScreen() {
 
         <Pressable onPress={takePhoto} disabled={camera.capturing}>
           {({ pressed }) => (
-            <View style={[styles.captureOuter, pressed && { transform: [{ scale: 0.94 }] }]}>
-              <View style={styles.captureInner}>
-                {camera.capturing && <ActivityIndicator color={Colors.ink} />}
-              </View>
+            <View style={[styles.shutterOuter, pressed && { transform: [{ scale: 0.96 }] }]}>
+              {camera.capturing ? (
+                <ActivityIndicator color={Colors.ink} />
+              ) : (
+                <ApertureStar size={22} color={Colors.ink} />
+              )}
             </View>
           )}
         </Pressable>
@@ -311,7 +460,7 @@ const styles = StyleSheet.create({
     marginTop: 10,
   },
   viewfinder: {
-    marginHorizontal: 12,
+    marginHorizontal: 8,
     borderRadius: 24,
     overflow: 'hidden',
     backgroundColor: '#000',
@@ -362,22 +511,15 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: Colors.separator,
   },
-  captureOuter: {
-    width: 84,
-    height: 84,
-    borderRadius: 42,
-    borderWidth: 5,
-    borderColor: Colors.paper,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  captureInner: {
-    width: 64,
-    height: 64,
-    borderRadius: 32,
+  shutterOuter: {
+    width: 76,
+    height: 76,
+    borderRadius: 18,
     backgroundColor: Colors.gold,
     alignItems: 'center',
     justifyContent: 'center',
+    borderWidth: 4,
+    borderColor: Colors.paper,
   },
   // Preview mode
   previewHeader: {
@@ -435,6 +577,17 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: Colors.separator,
     paddingBottom: 6,
+  },
+  aiRow: {
+    flexDirection: 'row',
+    gap: 18,
+    paddingHorizontal: 24,
+    marginTop: 8,
+    minHeight: 16,
+    alignItems: 'center',
+  },
+  aiHint: {
+    ...Typography.labelGold,
   },
   actionRow: {
     flexDirection: 'row',
