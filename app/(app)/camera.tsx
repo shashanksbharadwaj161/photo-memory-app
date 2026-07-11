@@ -15,7 +15,6 @@ import * as Haptics from 'expo-haptics';
 import { router, useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Animated, {
-  FadeIn,
   ZoomIn,
   useSharedValue,
   useAnimatedStyle,
@@ -33,11 +32,11 @@ import { FilterStrip } from '@/components/FilterStrip';
 import { FilteredImage } from '@/components/FilteredImage';
 import { Slider } from '@/components/Slider';
 import { GoldButton } from '@/components/GoldButton';
-import { Logo } from '@/components/Logo';
+import { BreathingDot } from '@/components/BreathingDot';
+import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { getUserProfile, addPhotoToBook, PARTNER_COLORS } from '@/lib/book';
 import { isClaudeAvailable, suggestCaption, finishSentence, saveCaptionToHistory, getCaptionHistory } from '@/lib/claude';
 import { friendlyErrorMessage } from '@/lib/errors';
-import { BreathingDot } from '@/components/BreathingDot';
 
 const FLASH_ICON = {
   off: 'flash-off-outline',
@@ -67,13 +66,30 @@ function ApertureStar({ size = 20, color = Colors.ink }: { size?: number; color?
   );
 }
 
+/** Wrapped in an ErrorBoundary so a camera crash shows a fallback, not a blank screen. */
 export default function CameraScreen() {
+  return (
+    <ErrorBoundary name="camera">
+      <CameraScreenInner />
+    </ErrorBoundary>
+  );
+}
+
+function CameraScreenInner() {
   const insets = useSafeAreaInsets();
   const { width, height } = useWindowDimensions();
   const { user, bookId } = useAuth();
   const camera = useCamera();
   const filters = useFilters();
   const cameraRef = useRef<CameraView>(null);
+
+  // Debug: log the permission status on every render.
+  console.log(
+    '[Camera] render — permission status:',
+    camera.permission?.status,
+    '| granted:',
+    camera.permission?.granted
+  );
 
   const [captured, setCaptured] = useState<{ uri: string; width: number; height: number } | null>(
     null
@@ -120,8 +136,8 @@ export default function CameraScreen() {
         setCaptured({ uri: photo.uri, width: photo.width, height: photo.height });
         previewEntranceY.value = withSpring(0, { damping: 11, stiffness: 140, mass: 0.7 });
       }
-    } catch {
-      // ignore — user can retry
+    } catch (err) {
+      console.log('[Camera] takePictureAsync failed:', (err as Error)?.message);
     } finally {
       camera.setCapturing(false);
     }
@@ -269,6 +285,7 @@ export default function CameraScreen() {
         discard();
       }, 1100);
     } catch (err) {
+      console.log('[Camera] addToBook failed:', (err as Error)?.message);
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(() => {});
       setUploadError(friendlyErrorMessage(err, "Couldn't add this to your book. Please try again."));
     } finally {
@@ -276,11 +293,16 @@ export default function CameraScreen() {
     }
   };
 
+  const permStatusLabel = camera.permission
+    ? `camera permission: ${camera.permission.status}${camera.permission.granted ? ' (granted)' : ''}`
+    : 'camera permission: checking…';
+
   // ── Permission gate ────────────────────────────────────────
   if (!camera.permission) {
     return (
       <View style={styles.center}>
         <ActivityIndicator color={Colors.gold} />
+        <Text style={styles.debugText}>{permStatusLabel}</Text>
       </View>
     );
   }
@@ -303,21 +325,7 @@ export default function CameraScreen() {
           onPress={importFromGallery}
           style={{ marginTop: 12, alignSelf: 'stretch' }}
         />
-      </View>
-    );
-  }
-  if (cameraError && !captured) {
-    return (
-      <View style={[styles.center, { padding: 32 }]}>
-        <Ionicons name="camera-outline" size={64} color={Colors.textMuted} />
-        <Text style={styles.permTitle}>Camera unavailable</Text>
-        <Text style={styles.permBody}>Import from gallery instead.</Text>
-        <GoldButton
-          label="Import from gallery"
-          icon="images-outline"
-          onPress={importFromGallery}
-          style={{ marginTop: 22, alignSelf: 'stretch' }}
-        />
+        <Text style={[styles.debugText, { marginTop: 20 }]}>{permStatusLabel}</Text>
       </View>
     );
   }
@@ -340,6 +348,7 @@ export default function CameraScreen() {
           <FilteredImage
             uri={captured.uri}
             filterId={filters.selectedId}
+            filter={filters.selected}
             intensity={filters.intensity}
             radius={16}
             style={{ width: width - 40, height: previewHeight }}
@@ -422,56 +431,91 @@ export default function CameraScreen() {
   }
 
   // ── Live camera mode ───────────────────────────────────────
+  // NOTE: the CameraView is full-bleed with NO borderRadius/overflow clipping.
+  // On Android, wrapping the camera preview surface in a rounded, clipped
+  // container renders it black — so the preview fills the area cleanly and the
+  // "frame" is suggested by the surrounding chrome instead.
   const tint = filters.selected.tintForThumbnail;
   return (
     <View style={styles.root}>
-      <View style={[styles.viewfinder, { height: previewHeight, marginTop: insets.top + 6 }]}>
-        {active && !cameraError && (
+      <View style={styles.cameraArea}>
+        {active && !cameraError ? (
           <CameraView
             ref={cameraRef}
             style={StyleSheet.absoluteFill}
             facing={camera.facing}
             flash={camera.flash}
             onCameraReady={() => camera.setReady(true)}
-            onMountError={() => setCameraError(true)}
+            onMountError={(e) => {
+              console.log('[Camera] onMountError:', e?.message);
+              setCameraError(true);
+            }}
           />
+        ) : (
+          <View style={[StyleSheet.absoluteFill, styles.cameraFallback]}>
+            <Ionicons name="camera-outline" size={56} color={Colors.textMuted} />
+            <Text style={styles.fallbackTitle}>
+              {cameraError ? 'Camera unavailable' : 'Camera paused'}
+            </Text>
+            {cameraError && (
+              <GoldButton
+                label="Import from gallery"
+                icon="images-outline"
+                onPress={importFromGallery}
+                style={{ marginTop: 16 }}
+              />
+            )}
+          </View>
         )}
-        {/* Live filter approximation — a soft tint + vignette over the preview */}
-        {tint !== 'transparent' && (
+
+        {/* Live filter approximation — a soft tint over the preview */}
+        {!cameraError && tint !== 'transparent' && (
           <View style={[StyleSheet.absoluteFill, { backgroundColor: tint }]} pointerEvents="none" />
         )}
-        <View style={styles.vignetteEdge} pointerEvents="none" />
 
-        <Pressable onPress={camera.cycleFlash} style={[styles.flashBtn, { top: 14 }]} hitSlop={8}>
-          <Ionicons name={FLASH_ICON[camera.flash]} size={22} color={Colors.paper} />
-        </Pressable>
-        <Text style={styles.liveFilterName}>{filters.selected.name}</Text>
-      </View>
-
-      <View style={styles.strip}>
-        <FilterStrip selectedId={filters.selectedId} onSelect={filters.select} onLongPress={openFilterBuilder} />
-      </View>
-
-      <View style={[styles.controls, { paddingBottom: insets.bottom + 8 }]}>
-        <Pressable onPress={importFromGallery} style={styles.sideBtn} hitSlop={10}>
-          <Ionicons name="images-outline" size={26} color={Colors.gold} />
-        </Pressable>
-
-        <Pressable onPress={takePhoto} disabled={camera.capturing}>
-          {({ pressed }) => (
-            <View style={[styles.shutterOuter, pressed && { transform: [{ scale: 0.96 }] }]}>
-              {camera.capturing ? (
-                <ActivityIndicator color={Colors.ink} />
-              ) : (
-                <ApertureStar size={22} color={Colors.ink} />
-              )}
-            </View>
+        {/* Top overlay: debug status (left) + flash toggle (right) */}
+        <View style={[styles.topRow, { top: insets.top + 10 }]} pointerEvents="box-none">
+          <Text style={styles.debugText}>{permStatusLabel}</Text>
+          {!cameraError && (
+            <Pressable onPress={camera.cycleFlash} style={styles.flashBtn} hitSlop={8}>
+              <Ionicons name={FLASH_ICON[camera.flash]} size={22} color={Colors.paper} />
+            </Pressable>
           )}
-        </Pressable>
+        </View>
 
-        <Pressable onPress={camera.toggleFacing} style={styles.sideBtn} hitSlop={10}>
-          <Ionicons name="camera-reverse-outline" size={28} color={Colors.gold} />
-        </Pressable>
+        {!cameraError && <Text style={styles.liveFilterName}>{filters.selected.name}</Text>}
+      </View>
+
+      <View style={styles.bottomBar}>
+        <FilterStrip selectedId={filters.selectedId} onSelect={filters.select} onLongPress={openFilterBuilder} />
+
+        <View style={[styles.controls, { paddingBottom: insets.bottom + 8 }]}>
+          <Pressable onPress={importFromGallery} style={styles.sideBtn} hitSlop={10}>
+            <Ionicons name="images-outline" size={26} color={Colors.gold} />
+          </Pressable>
+
+          <Pressable onPress={takePhoto} disabled={camera.capturing || cameraError}>
+            {({ pressed }) => (
+              <View
+                style={[
+                  styles.shutterOuter,
+                  cameraError && styles.shutterDisabled,
+                  pressed && { transform: [{ scale: 0.96 }] },
+                ]}
+              >
+                {camera.capturing ? (
+                  <ActivityIndicator color={Colors.ink} />
+                ) : (
+                  <ApertureStar size={22} color={Colors.ink} />
+                )}
+              </View>
+            )}
+          </Pressable>
+
+          <Pressable onPress={camera.toggleFacing} style={styles.sideBtn} hitSlop={10}>
+            <Ionicons name="camera-reverse-outline" size={28} color={Colors.gold} />
+          </Pressable>
+        </View>
       </View>
     </View>
   );
@@ -487,6 +531,7 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.ink,
     alignItems: 'center',
     justifyContent: 'center',
+    gap: 12,
   },
   permTitle: {
     fontFamily: Fonts.serifBold,
@@ -502,21 +547,42 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginTop: 10,
   },
-  viewfinder: {
-    marginHorizontal: 8,
-    borderRadius: 24,
+  debugText: {
+    fontFamily: Fonts.serif,
+    fontSize: 11,
+    color: 'rgba(245,239,224,0.75)',
+    backgroundColor: 'rgba(0,0,0,0.45)',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
     overflow: 'hidden',
+  },
+  // Live camera
+  cameraArea: {
+    flex: 1,
     backgroundColor: '#000',
   },
-  vignetteEdge: {
-    ...StyleSheet.absoluteFillObject,
-    borderRadius: 24,
-    borderWidth: 40,
-    borderColor: 'rgba(0,0,0,0.18)',
+  cameraFallback: {
+    backgroundColor: Colors.inkLight,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 12,
+    padding: 24,
+  },
+  fallbackTitle: {
+    fontFamily: Fonts.serif,
+    fontSize: 16,
+    color: Colors.textMuted,
+  },
+  topRow: {
+    position: 'absolute',
+    left: 14,
+    right: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
   },
   flashBtn: {
-    position: 'absolute',
-    right: 14,
     width: 40,
     height: 40,
     borderRadius: 20,
@@ -526,7 +592,7 @@ const styles = StyleSheet.create({
   },
   liveFilterName: {
     position: 'absolute',
-    bottom: 12,
+    bottom: 14,
     alignSelf: 'center',
     fontFamily: Fonts.hand,
     fontSize: 22,
@@ -534,15 +600,16 @@ const styles = StyleSheet.create({
     textShadowColor: 'rgba(0,0,0,0.6)',
     textShadowRadius: 4,
   },
-  strip: {
-    marginTop: 6,
+  bottomBar: {
+    backgroundColor: Colors.ink,
+    paddingTop: 8,
   },
   controls: {
-    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-around',
     paddingHorizontal: 30,
+    paddingTop: 6,
   },
   sideBtn: {
     width: 54,
@@ -563,6 +630,9 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     borderWidth: 4,
     borderColor: Colors.paper,
+  },
+  shutterDisabled: {
+    opacity: 0.4,
   },
   // Preview mode
   previewHeader: {
