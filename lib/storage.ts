@@ -7,8 +7,8 @@ import * as MediaLibrary from 'expo-media-library';
 // Settings → Upload → Upload presets → Add upload preset → Signing mode:
 // "Unsigned". No API key/secret is ever needed on-device.
 // ─────────────────────────────────────────────────────────────
-const CLOUDINARY_CLOUD_NAME = 'PASTE_YOUR_CLOUD_NAME';
-const CLOUDINARY_UPLOAD_PRESET = 'PASTE_YOUR_UPLOAD_PRESET';
+const CLOUDINARY_CLOUD_NAME = 'rs16omer';
+const CLOUDINARY_UPLOAD_PRESET = 'ojl4trdg';
 // ─────────────────────────────────────────────────────────────
 
 /** True until the developer replaces the placeholder credentials above. */
