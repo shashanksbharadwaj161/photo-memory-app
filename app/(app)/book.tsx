@@ -14,7 +14,15 @@ import {
 } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import Animated, { FadeIn } from 'react-native-reanimated';
+import Animated, {
+  FadeIn,
+  useSharedValue,
+  useAnimatedScrollHandler,
+  useAnimatedStyle,
+  interpolate,
+  Extrapolation,
+  type SharedValue,
+} from 'react-native-reanimated';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors } from '@/constants/colors';
 import { Fonts } from '@/constants/fonts';
@@ -51,8 +59,57 @@ import { ErrorBar } from '@/components/ErrorBar';
 import { PhotoViewer } from '@/components/PhotoViewer';
 import { BottomSheet, SheetAction } from '@/components/BottomSheet';
 import { Logo } from '@/components/Logo';
+import { BreathingLogo } from '@/components/BreathingLogo';
 import { RadialBackdrop } from '@/components/RadialBackdrop';
 import { AmbientMode } from '@/components/AmbientMode';
+
+/**
+ * Scroll-driven page turn: as a page leaves centre it tilts away in
+ * perspective, shrinks slightly, and dims — the weight of paper, not a
+ * sliding card. Driven on the UI thread from the pager's scroll offset.
+ */
+function TurningPage({
+  index,
+  scrollX,
+  pageWidth,
+  children,
+}: {
+  index: number;
+  scrollX: SharedValue<number>;
+  pageWidth: number;
+  children: React.ReactNode;
+}) {
+  const range = [(index - 1) * pageWidth, index * pageWidth, (index + 1) * pageWidth];
+
+  const turnStyle = useAnimatedStyle(() => ({
+    transform: [
+      { perspective: 1400 },
+      {
+        rotateY: `${interpolate(scrollX.value, range, [12, 0, -12], Extrapolation.CLAMP)}deg`,
+      },
+      { scale: interpolate(scrollX.value, range, [0.94, 1, 0.94], Extrapolation.CLAMP) },
+    ],
+  }));
+
+  const shadeStyle = useAnimatedStyle(() => ({
+    opacity: interpolate(
+      scrollX.value,
+      range,
+      [0.32, 0, 0.32],
+      Extrapolation.CLAMP
+    ),
+  }));
+
+  return (
+    <Animated.View style={turnStyle}>
+      {children}
+      <Animated.View
+        pointerEvents="none"
+        style={[StyleSheet.absoluteFill, { backgroundColor: '#160F08', borderRadius: 6 }, shadeStyle]}
+      />
+    </Animated.View>
+  );
+}
 
 type PageItem =
   | { kind: 'quiet'; key: string; date: number; photo: BookPhoto }
@@ -90,6 +147,11 @@ export default function BookScreen() {
   const [timeLocks, setTimeLocks] = useState<TimeLock[]>([]);
   const [letters, setLetters] = useState<FutureLetter[]>([]);
   const [ambientVisible, setAmbientVisible] = useState(false);
+
+  const scrollX = useSharedValue(0);
+  const onScroll = useAnimatedScrollHandler((e) => {
+    scrollX.value = e.contentOffset.x;
+  });
 
   const season = useMemo(() => getCurrentSeason(), []);
   const seasonTheme = SeasonalTheme[season];
@@ -314,17 +376,12 @@ export default function BookScreen() {
       <View style={styles.root} onTouchStart={() => recordInteraction()}>
         <RadialBackdrop seasonTint={seasonTheme.tint} />
         {header}
-        <Animated.View entering={FadeIn} style={styles.empty}>
-          <Logo size={92} />
-          <Text style={styles.emptyTitle}>Your story starts here</Text>
-          <Text style={styles.emptySub}>Take your first photo together ↓</Text>
-          <Pressable
-            onPress={() => router.push('/(app)/camera' as any)}
-            style={styles.emptyArrow}
-          >
-            <BreathingDot size={54} color={Colors.gold} />
-            <Ionicons name="camera" size={26} color={Colors.ink} style={styles.emptyArrowIcon} />
+        <Animated.View entering={FadeIn.duration(700)} style={styles.empty}>
+          <Pressable onPress={() => router.push('/(app)/camera' as any)}>
+            <BreathingLogo size={96} />
           </Pressable>
+          <Text style={styles.emptyTitle}>Your story starts here</Text>
+          <Text style={styles.emptySub}>Take your first photo together</Text>
         </Animated.View>
         {error && <ErrorBar message={error} onRetry={retry} bottomInset={insets.bottom + 20} />}
       </View>
@@ -339,23 +396,24 @@ export default function BookScreen() {
 
       <View style={styles.listArea} onLayout={onListLayout}>
         {listHeight > 0 && (
-          <FlatList
-            ref={listRef}
+          <Animated.FlatList
+            ref={listRef as any}
             data={pageItems}
-            keyExtractor={(p) => p.key}
+            keyExtractor={(p: PageItem) => p.key}
             horizontal
             pagingEnabled
             showsHorizontalScrollIndicator={false}
+            onScroll={onScroll}
+            scrollEventThrottle={16}
             onViewableItemsChanged={onViewRef.current}
             viewabilityConfig={viewConfigRef.current}
-            getItemLayout={(_, i) => ({ length: width, offset: width * i, index: i })}
+            getItemLayout={(_: unknown, i: number) => ({ length: width, offset: width * i, index: i })}
             windowSize={3}
             maxToRenderPerBatch={3}
-            removeClippedSubviews
-            onScrollToIndexFailed={({ index: i }) => {
+            onScrollToIndexFailed={({ index: i }: { index: number }) => {
               setTimeout(() => listRef.current?.scrollToIndex({ index: i, animated: false }), 120);
             }}
-            renderItem={({ item }) => {
+            renderItem={({ item, index: itemIndex }: { item: PageItem; index: number }) => {
               const unlocked = justUnlocked.has(item.key);
               return (
                 <View style={[styles.pageSlot, { width }]}>
@@ -373,28 +431,30 @@ export default function BookScreen() {
                     ))}
                   </View>
 
-                  <PageFlip play={item.kind === 'photo' && revealKey === item.photo.id} style={styles.pageFlip}>
-                    {item.kind === 'quiet' && (
-                      <QuietPage photo={item.photo} width={pageWidth} height={pageHeight} onPress={() => setViewer(item.photo)} />
-                    )}
-                    {item.kind === 'photo' && (
-                      <BookPage
-                        photo={item.photo}
-                        width={pageWidth}
-                        height={pageHeight}
-                        onPressPhoto={() => setViewer(item.photo)}
-                        onLongPress={() => setSheetPhoto(item.photo)}
-                        onLongPressBackground={writeALetter}
-                        onSaveCaption={(c) => saveCaption(item.photo, c)}
-                      />
-                    )}
-                    {item.kind === 'timelock' && (
-                      <TimeLockPage lock={item.lock} width={pageWidth} height={pageHeight} justUnlocked={unlocked} />
-                    )}
-                    {item.kind === 'letter' && (
-                      <LetterPage letter={item.letter} width={pageWidth} height={pageHeight} justUnlocked={unlocked} />
-                    )}
-                  </PageFlip>
+                  <TurningPage index={itemIndex} scrollX={scrollX} pageWidth={width}>
+                    <PageFlip play={item.kind === 'photo' && revealKey === item.photo.id} style={styles.pageFlip}>
+                      {item.kind === 'quiet' && (
+                        <QuietPage photo={item.photo} width={pageWidth} height={pageHeight} onPress={() => setViewer(item.photo)} />
+                      )}
+                      {item.kind === 'photo' && (
+                        <BookPage
+                          photo={item.photo}
+                          width={pageWidth}
+                          height={pageHeight}
+                          onPressPhoto={() => setViewer(item.photo)}
+                          onLongPress={() => setSheetPhoto(item.photo)}
+                          onLongPressBackground={writeALetter}
+                          onSaveCaption={(c) => saveCaption(item.photo, c)}
+                        />
+                      )}
+                      {item.kind === 'timelock' && (
+                        <TimeLockPage lock={item.lock} width={pageWidth} height={pageHeight} justUnlocked={unlocked} />
+                      )}
+                      {item.kind === 'letter' && (
+                        <LetterPage letter={item.letter} width={pageWidth} height={pageHeight} justUnlocked={unlocked} />
+                      )}
+                    </PageFlip>
+                  </TurningPage>
                 </View>
               );
             }}

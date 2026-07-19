@@ -7,15 +7,19 @@ import {
   TextInput,
   useWindowDimensions,
   ActivityIndicator,
+  KeyboardAvoidingView,
+  Platform,
+  ScrollView,
 } from 'react-native';
-import { CameraView } from 'expo-camera';
 import * as ImagePicker from 'expo-image-picker';
 import * as ImageManipulator from 'expo-image-manipulator';
 import * as Haptics from 'expo-haptics';
-import { router, useFocusEffect } from 'expo-router';
+import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { LinearGradient } from 'expo-linear-gradient';
 import Animated, {
   ZoomIn,
+  FadeIn,
   useSharedValue,
   useAnimatedStyle,
   withSpring,
@@ -26,23 +30,26 @@ import { Colors } from '@/constants/colors';
 import { Fonts } from '@/constants/fonts';
 import { Typography } from '@/constants/typography';
 import { useAuth } from '@/hooks/useAuth';
-import { useCamera } from '@/hooks/useCamera';
 import { useFilters } from '@/hooks/useFilters';
 import { FilterStrip } from '@/components/FilterStrip';
 import { FilteredImage } from '@/components/FilteredImage';
 import { Slider } from '@/components/Slider';
 import { GoldButton } from '@/components/GoldButton';
 import { BreathingDot } from '@/components/BreathingDot';
+import { BreathingLogo } from '@/components/BreathingLogo';
+import { GlassPanel } from '@/components/GlassPanel';
+import { PressableScale } from '@/components/PressableScale';
+import { RadialBackdrop } from '@/components/RadialBackdrop';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { getUserProfile, addPhotoToBook, PARTNER_COLORS } from '@/lib/book';
-import { isClaudeAvailable, suggestCaption, finishSentence, saveCaptionToHistory, getCaptionHistory } from '@/lib/claude';
+import {
+  isClaudeAvailable,
+  suggestCaption,
+  finishSentence,
+  saveCaptionToHistory,
+  getCaptionHistory,
+} from '@/lib/claude';
 import { friendlyErrorMessage } from '@/lib/errors';
-
-const FLASH_ICON = {
-  off: 'flash-off-outline',
-  on: 'flash',
-  auto: 'flash-outline',
-} as const;
 
 function timeOfDayLabel(): string {
   const h = new Date().getHours();
@@ -51,6 +58,15 @@ function timeOfDayLabel(): string {
   if (h < 17) return 'afternoon';
   if (h < 21) return 'evening';
   return 'night';
+}
+
+function greeting(): string {
+  const h = new Date().getHours();
+  if (h < 6) return 'The quiet hours.';
+  if (h < 12) return 'What does this morning look like?';
+  if (h < 17) return 'What does today look like?';
+  if (h < 21) return 'Hold on to this evening.';
+  return 'Before the day slips away.';
 }
 
 function ApertureStar({ size = 20, color = Colors.ink }: { size?: number; color?: string }) {
@@ -66,30 +82,20 @@ function ApertureStar({ size = 20, color = Colors.ink }: { size?: number; color?
   );
 }
 
-/** Wrapped in an ErrorBoundary so a camera crash shows a fallback, not a blank screen. */
+/** Wrapped in an ErrorBoundary so any crash shows a fallback, never a blank screen. */
 export default function CameraScreen() {
   return (
-    <ErrorBoundary name="camera">
-      <CameraScreenInner />
+    <ErrorBoundary name="darkroom">
+      <DarkroomInner />
     </ErrorBoundary>
   );
 }
 
-function CameraScreenInner() {
+function DarkroomInner() {
   const insets = useSafeAreaInsets();
   const { width, height } = useWindowDimensions();
   const { user, bookId } = useAuth();
-  const camera = useCamera();
   const filters = useFilters();
-  const cameraRef = useRef<CameraView>(null);
-
-  // Debug: log the permission status on every render.
-  console.log(
-    '[Camera] render — permission status:',
-    camera.permission?.status,
-    '| granted:',
-    camera.permission?.granted
-  );
 
   const [captured, setCaptured] = useState<{ uri: string; width: number; height: number } | null>(
     null
@@ -97,64 +103,62 @@ function CameraScreenInner() {
   const [caption, setCaption] = useState('');
   const [saving, setSaving] = useState(false);
   const [success, setSuccess] = useState(false);
-  const [active, setActive] = useState(true);
   const [claudeOn, setClaudeOn] = useState(false);
   const [suggesting, setSuggesting] = useState(false);
   const [showFinish, setShowFinish] = useState(false);
-  const [cameraError, setCameraError] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
+  const [permissionNote, setPermissionNote] = useState<string | null>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout>>();
 
-  const previewEntranceY = useSharedValue(60);
-  const previewStyle = useAnimatedStyle(() => ({
-    transform: [{ translateY: previewEntranceY.value }],
+  const developY = useSharedValue(80);
+  const developStyle = useAnimatedStyle(() => ({
+    transform: [{ translateY: developY.value }],
   }));
 
   useEffect(() => {
     isClaudeAvailable().then(setClaudeOn).catch(() => {});
   }, []);
 
-  // Only mount the camera while the tab is focused (frees the sensor otherwise).
-  useFocusEffect(
-    React.useCallback(() => {
-      setActive(true);
-      return () => setActive(false);
-    }, [])
-  );
-
-  const previewHeight = Math.round(height * 0.62);
-
-  // ── Capture ────────────────────────────────────────────────
-  const takePhoto = async () => {
-    if (!cameraRef.current || camera.capturing) return;
-    camera.setCapturing(true);
+  const receivePhoto = (asset: ImagePicker.ImagePickerAsset) => {
+    developY.value = 80;
+    setCaptured({ uri: asset.uri, width: asset.width ?? 0, height: asset.height ?? 0 });
+    developY.value = withSpring(0, { damping: 12, stiffness: 130, mass: 0.8 });
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
+  };
+
+  // ── Capture via the NATIVE camera app (works on every Android device) ──
+  const capture = async () => {
+    setPermissionNote(null);
     try {
-      const photo = await cameraRef.current.takePictureAsync({ quality: 0.9 });
-      if (photo) {
-        previewEntranceY.value = 60;
-        setCaptured({ uri: photo.uri, width: photo.width, height: photo.height });
-        previewEntranceY.value = withSpring(0, { damping: 11, stiffness: 140, mass: 0.7 });
+      const perm = await ImagePicker.requestCameraPermissionsAsync();
+      if (!perm.granted) {
+        setPermissionNote(
+          'Camera access is off. You can allow it in your phone settings, or import from your gallery below.'
+        );
+        return;
       }
+      const result = await ImagePicker.launchCameraAsync({ quality: 0.9, exif: false });
+      if (!result.canceled && result.assets?.[0]) receivePhoto(result.assets[0]);
     } catch (err) {
-      console.log('[Camera] takePictureAsync failed:', (err as Error)?.message);
-    } finally {
-      camera.setCapturing(false);
+      setPermissionNote(friendlyErrorMessage(err, "The camera couldn't open. Try importing instead."));
     }
   };
 
   const importFromGallery = async () => {
-    const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (!perm.granted) return;
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      quality: 1,
-    });
-    if (!result.canceled && result.assets[0]) {
-      const a = result.assets[0];
-      previewEntranceY.value = 60;
-      setCaptured({ uri: a.uri, width: a.width ?? 0, height: a.height ?? 0 });
-      previewEntranceY.value = withSpring(0, { damping: 11, stiffness: 140, mass: 0.7 });
+    setPermissionNote(null);
+    try {
+      const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!perm.granted) {
+        setPermissionNote('Photo access is off. You can allow it in your phone settings.');
+        return;
+      }
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        quality: 1,
+      });
+      if (!result.canceled && result.assets?.[0]) receivePhoto(result.assets[0]);
+    } catch (err) {
+      setPermissionNote(friendlyErrorMessage(err, "Couldn't open your gallery. Please try again."));
     }
   };
 
@@ -206,12 +210,12 @@ function CameraScreenInner() {
       const text = await suggestCaption(
         'a moment just captured together',
         timeOfDayLabel(),
-        filters.selected.name || 'Original',
+        filters.selected?.name || 'Original',
         history
       );
       if (text) setCaption(text);
     } catch {
-      // silent — Claude is a nice-to-have
+      // Claude is a nice-to-have — stay silent.
     } finally {
       setSuggesting(false);
     }
@@ -239,9 +243,7 @@ function CameraScreenInner() {
       const trimmed = text.trim();
       const lastChar = trimmed.slice(-1);
       const endsWithPunctuation = ['.', '!', '?', '…', ','].includes(lastChar);
-      if (claudeOn && trimmed.length > 5 && !endsWithPunctuation) {
-        setShowFinish(true);
-      }
+      if (claudeOn && trimmed.length > 5 && !endsWithPunctuation) setShowFinish(true);
     }, 800);
   };
 
@@ -285,7 +287,6 @@ function CameraScreenInner() {
         discard();
       }, 1100);
     } catch (err) {
-      console.log('[Camera] addToBook failed:', (err as Error)?.message);
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(() => {});
       setUploadError(friendlyErrorMessage(err, "Couldn't add this to your book. Please try again."));
     } finally {
@@ -293,123 +294,110 @@ function CameraScreenInner() {
     }
   };
 
-  const permStatusLabel = camera.permission
-    ? `camera permission: ${camera.permission.status}${camera.permission.granted ? ' (granted)' : ''}`
-    : 'camera permission: checking…';
-
-  // ── Permission gate ────────────────────────────────────────
-  if (!camera.permission) {
-    return (
-      <View style={styles.center}>
-        <ActivityIndicator color={Colors.gold} />
-        <Text style={styles.debugText}>{permStatusLabel}</Text>
-      </View>
-    );
-  }
-  if (!camera.permission.granted) {
-    return (
-      <View style={[styles.center, { padding: 32 }]}>
-        <Ionicons name="camera-outline" size={64} color={Colors.gold} />
-        <Text style={styles.permTitle}>Camera access needed</Text>
-        <Text style={styles.permBody}>
-          Locket needs your camera to capture memories together.
-        </Text>
-        <GoldButton
-          label="Allow camera access"
-          onPress={camera.requestPermission}
-          style={{ marginTop: 22, alignSelf: 'stretch' }}
-        />
-        <GoldButton
-          label="Import from gallery instead"
-          variant="ghost"
-          onPress={importFromGallery}
-          style={{ marginTop: 12, alignSelf: 'stretch' }}
-        />
-        <Text style={[styles.debugText, { marginTop: 20 }]}>{permStatusLabel}</Text>
-      </View>
-    );
-  }
-
-  // ── Preview / edit mode ────────────────────────────────────
+  // ═══ DEVELOPMENT ROOM — a photo is on the table ═══════════════
   if (captured) {
+    const photoHeight = Math.min(height * 0.46, width * 1.1);
     return (
-      <View style={[styles.root, { paddingTop: insets.top }]}>
-        <View style={styles.previewHeader}>
-          <Pressable onPress={discard} hitSlop={10} style={styles.headerBtn}>
-            <Ionicons name="close" size={26} color={Colors.textOnInk} />
-          </Pressable>
-          <Text style={styles.headerTitle}>New memory</Text>
-          <Pressable onPress={openTimeLock} hitSlop={10} style={styles.headerBtn}>
-            <Ionicons name="lock-closed-outline" size={22} color={Colors.gold} />
-          </Pressable>
-        </View>
-
-        <Animated.View style={[styles.previewArea, previewStyle]}>
-          <FilteredImage
-            uri={captured.uri}
-            filterId={filters.selectedId}
-            filter={filters.selected}
-            intensity={filters.intensity}
-            radius={16}
-            style={{ width: width - 40, height: previewHeight }}
-          />
-        </Animated.View>
-
-        <View style={styles.editControls}>
-          <FilterStrip selectedId={filters.selectedId} onSelect={filters.select} onLongPress={openFilterBuilder} />
-          {filters.selectedId !== 'none' && (
-            <View style={styles.sliderRow}>
-              <Ionicons name="contrast-outline" size={16} color={Colors.textMuted} />
-              <View style={styles.sliderFlex}>
-                <Slider value={filters.intensity} onChange={filters.setIntensity} />
-              </View>
-              <Text style={styles.sliderPct}>{Math.round(filters.intensity * 100)}%</Text>
+      <KeyboardAvoidingView
+        style={styles.root}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      >
+        <RadialBackdrop />
+        <ScrollView
+          contentContainerStyle={{ paddingTop: insets.top + 6, paddingBottom: insets.bottom + 16 }}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
+        >
+          <View style={styles.devHeader}>
+            <PressableScale onPress={discard} hitSlop={10} style={styles.headerBtn}>
+              <Ionicons name="close" size={24} color={Colors.textOnInk} />
+            </PressableScale>
+            <View style={styles.devTitleWrap}>
+              <Text style={styles.devLabel}>THE DARKROOM</Text>
+              <Text style={styles.devTitle}>Developing…</Text>
             </View>
-          )}
-
-          <TextInput
-            value={caption}
-            onChangeText={onChangeCaption}
-            placeholder="Say something…"
-            placeholderTextColor={Colors.textMuted}
-            style={styles.captionInput}
-            maxLength={140}
-            multiline
-          />
-
-          <View style={styles.aiRow}>
-            {claudeOn && !suggesting && (
-              <Pressable onPress={doSuggestCaption} hitSlop={6}>
-                <Text style={styles.aiHint}>✦ Suggest</Text>
-              </Pressable>
-            )}
-            {showFinish && !suggesting && (
-              <Pressable onPress={doFinishSentence} hitSlop={6}>
-                <Text style={styles.aiHint}>✦ Finish</Text>
-              </Pressable>
-            )}
-            {suggesting && <ActivityIndicator size="small" color={Colors.gold} />}
+            <PressableScale onPress={openTimeLock} hitSlop={10} style={styles.headerBtn}>
+              <Ionicons name="lock-closed-outline" size={21} color={Colors.gold} />
+            </PressableScale>
           </View>
 
-          {uploadError && <Text style={styles.uploadError}>{uploadError}</Text>}
+          <Animated.View style={[styles.devPhotoWrap, developStyle]}>
+            <FilteredImage
+              uri={captured.uri}
+              filterId={filters.selectedId}
+              filter={filters.selected}
+              intensity={filters.intensity}
+              radius={18}
+              style={{ width: width - 36, height: photoHeight }}
+            />
+            {/* Warm lamp falloff over the print */}
+            <LinearGradient
+              colors={['rgba(232,200,126,0.07)', 'rgba(0,0,0,0)', 'rgba(0,0,0,0.22)']}
+              style={[StyleSheet.absoluteFill, { borderRadius: 18 }]}
+              pointerEvents="none"
+            />
+          </Animated.View>
 
-          <View style={[styles.actionRow, { paddingBottom: insets.bottom + 10 }]}>
-            <GoldButton
-              label="Discard"
-              variant="ghost"
-              onPress={discard}
-              disabled={saving}
-              style={styles.actionBtn}
+          <View style={styles.devControls}>
+            <FilterStrip
+              selectedId={filters.selectedId}
+              onSelect={filters.select}
+              onLongPress={openFilterBuilder}
             />
-            <GoldButton
-              label="Add to Book"
-              icon="add"
-              onPress={addToBook}
-              loading={saving}
-              style={styles.actionBtn}
+            {filters.selectedId !== 'none' && (
+              <View style={styles.sliderRow}>
+                <Ionicons name="contrast-outline" size={16} color={Colors.textMuted} />
+                <View style={{ flex: 1 }}>
+                  <Slider value={filters.intensity} onChange={filters.setIntensity} />
+                </View>
+                <Text style={styles.sliderPct}>{Math.round(filters.intensity * 100)}%</Text>
+              </View>
+            )}
+
+            <TextInput
+              value={caption}
+              onChangeText={onChangeCaption}
+              placeholder="Say something…"
+              placeholderTextColor={Colors.textMuted}
+              style={styles.captionInput}
+              maxLength={140}
+              multiline
             />
+
+            <View style={styles.aiRow}>
+              {claudeOn && !suggesting && (
+                <Pressable onPress={doSuggestCaption} hitSlop={6}>
+                  <Text style={styles.aiHint}>✦ Suggest</Text>
+                </Pressable>
+              )}
+              {showFinish && !suggesting && (
+                <Pressable onPress={doFinishSentence} hitSlop={6}>
+                  <Text style={styles.aiHint}>✦ Finish</Text>
+                </Pressable>
+              )}
+              {suggesting && <ActivityIndicator size="small" color={Colors.gold} />}
+            </View>
+
+            {uploadError && <Text style={styles.uploadError}>{uploadError}</Text>}
+
+            <View style={styles.actionRow}>
+              <GoldButton
+                label="Discard"
+                variant="ghost"
+                onPress={discard}
+                disabled={saving}
+                style={{ flex: 1 }}
+              />
+              <GoldButton
+                label="Add to Book"
+                icon="add"
+                onPress={addToBook}
+                loading={saving}
+                style={{ flex: 1 }}
+              />
+            </View>
           </View>
-        </View>
+        </ScrollView>
 
         {saving && (
           <View style={styles.savingOverlay} pointerEvents="none">
@@ -426,96 +414,65 @@ function CameraScreenInner() {
             <Text style={styles.successText}>Added to your book</Text>
           </Animated.View>
         )}
-      </View>
+      </KeyboardAvoidingView>
     );
   }
 
-  // ── Live camera mode ───────────────────────────────────────
-  // NOTE: the CameraView is full-bleed with NO borderRadius/overflow clipping.
-  // On Android, wrapping the camera preview surface in a rounded, clipped
-  // container renders it black — so the preview fills the area cleanly and the
-  // "frame" is suggested by the surrounding chrome instead.
-  const tint = filters.selected.tintForThumbnail;
+  // ═══ THE DARKROOM — waiting for light ═════════════════════════
   return (
     <View style={styles.root}>
-      <View style={styles.cameraArea}>
-        {active && !cameraError ? (
-          <CameraView
-            ref={cameraRef}
-            style={StyleSheet.absoluteFill}
-            facing={camera.facing}
-            flash={camera.flash}
-            onCameraReady={() => camera.setReady(true)}
-            onMountError={(e) => {
-              console.log('[Camera] onMountError:', e?.message);
-              setCameraError(true);
-            }}
-          />
-        ) : (
-          <View style={[StyleSheet.absoluteFill, styles.cameraFallback]}>
-            <Ionicons name="camera-outline" size={56} color={Colors.textMuted} />
-            <Text style={styles.fallbackTitle}>
-              {cameraError ? 'Camera unavailable' : 'Camera paused'}
-            </Text>
-            {cameraError && (
-              <GoldButton
-                label="Import from gallery"
-                icon="images-outline"
-                onPress={importFromGallery}
-                style={{ marginTop: 16 }}
-              />
-            )}
-          </View>
-        )}
+      <RadialBackdrop />
+      {/* A faint amber lamp from the top — the darkroom safelight */}
+      <LinearGradient
+        colors={['rgba(232,200,126,0.09)', 'rgba(0,0,0,0)']}
+        style={styles.lamp}
+        pointerEvents="none"
+      />
 
-        {/* Live filter approximation — a soft tint over the preview */}
-        {!cameraError && tint !== 'transparent' && (
-          <View style={[StyleSheet.absoluteFill, { backgroundColor: tint }]} pointerEvents="none" />
-        )}
+      <View style={[styles.darkroom, { paddingTop: insets.top + 24 }]}>
+        <Animated.View entering={FadeIn.duration(600)} style={styles.darkroomHeart}>
+          <BreathingLogo size={88} />
+          <Text style={styles.darkroomLabel}>THE DARKROOM</Text>
+          <Text style={styles.darkroomTitle}>{greeting()}</Text>
+        </Animated.View>
 
-        {/* Top overlay: debug status (left) + flash toggle (right) */}
-        <View style={[styles.topRow, { top: insets.top + 10 }]} pointerEvents="box-none">
-          <Text style={styles.debugText}>{permStatusLabel}</Text>
-          {!cameraError && (
-            <Pressable onPress={camera.cycleFlash} style={styles.flashBtn} hitSlop={8}>
-              <Ionicons name={FLASH_ICON[camera.flash]} size={22} color={Colors.paper} />
-            </Pressable>
-          )}
-        </View>
-
-        {!cameraError && <Text style={styles.liveFilterName}>{filters.selected.name}</Text>}
-      </View>
-
-      <View style={styles.bottomBar}>
-        <FilterStrip selectedId={filters.selectedId} onSelect={filters.select} onLongPress={openFilterBuilder} />
-
-        <View style={[styles.controls, { paddingBottom: insets.bottom + 8 }]}>
-          <Pressable onPress={importFromGallery} style={styles.sideBtn} hitSlop={10}>
-            <Ionicons name="images-outline" size={26} color={Colors.gold} />
-          </Pressable>
-
-          <Pressable onPress={takePhoto} disabled={camera.capturing || cameraError}>
-            {({ pressed }) => (
-              <View
-                style={[
-                  styles.shutterOuter,
-                  cameraError && styles.shutterDisabled,
-                  pressed && { transform: [{ scale: 0.96 }] },
-                ]}
-              >
-                {camera.capturing ? (
-                  <ActivityIndicator color={Colors.ink} />
-                ) : (
+        <View style={styles.actionsCol}>
+          <PressableScale onPress={capture} haptic="medium">
+            <GlassPanel tone="gold" style={styles.actionCard}>
+              <View style={styles.actionInner}>
+                <View style={styles.actionIconGold}>
                   <ApertureStar size={22} color={Colors.ink} />
-                )}
+                </View>
+                <View style={styles.actionTextWrap}>
+                  <Text style={styles.actionTitle}>Capture</Text>
+                  <Text style={styles.actionSub}>Open your camera</Text>
+                </View>
+                <Ionicons name="chevron-forward" size={18} color={Colors.gold} />
               </View>
-            )}
-          </Pressable>
+            </GlassPanel>
+          </PressableScale>
 
-          <Pressable onPress={camera.toggleFacing} style={styles.sideBtn} hitSlop={10}>
-            <Ionicons name="camera-reverse-outline" size={28} color={Colors.gold} />
-          </Pressable>
+          <PressableScale onPress={importFromGallery}>
+            <GlassPanel style={styles.actionCard}>
+              <View style={styles.actionInner}>
+                <View style={styles.actionIconGhost}>
+                  <Ionicons name="images-outline" size={22} color={Colors.gold} />
+                </View>
+                <View style={styles.actionTextWrap}>
+                  <Text style={styles.actionTitle}>Import</Text>
+                  <Text style={styles.actionSub}>Bring one from your gallery</Text>
+                </View>
+                <Ionicons name="chevron-forward" size={18} color={Colors.textMuted} />
+              </View>
+            </GlassPanel>
+          </PressableScale>
+
+          {permissionNote && <Text style={styles.permissionNote}>{permissionNote}</Text>}
         </View>
+
+        <Text style={[styles.footerHint, { marginBottom: insets.bottom + 18 }]}>
+          Thirteen films, and any you build yourself, are waiting.
+        </Text>
       </View>
     </View>
   );
@@ -526,121 +483,99 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: Colors.ink,
   },
-  center: {
-    flex: 1,
-    backgroundColor: Colors.ink,
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 12,
-  },
-  permTitle: {
-    fontFamily: Fonts.serifBold,
-    fontSize: 24,
-    color: Colors.textOnInk,
-    marginTop: 20,
-  },
-  permBody: {
-    fontFamily: Fonts.serif,
-    fontSize: 15,
-    lineHeight: 22,
-    color: Colors.textMuted,
-    textAlign: 'center',
-    marginTop: 10,
-  },
-  debugText: {
-    fontFamily: Fonts.serif,
-    fontSize: 11,
-    color: 'rgba(245,239,224,0.75)',
-    backgroundColor: 'rgba(0,0,0,0.45)',
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 6,
-    overflow: 'hidden',
-  },
-  // Live camera
-  cameraArea: {
-    flex: 1,
-    backgroundColor: '#000',
-  },
-  cameraFallback: {
-    backgroundColor: Colors.inkLight,
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 12,
-    padding: 24,
-  },
-  fallbackTitle: {
-    fontFamily: Fonts.serif,
-    fontSize: 16,
-    color: Colors.textMuted,
-  },
-  topRow: {
+  lamp: {
     position: 'absolute',
-    left: 14,
-    right: 14,
-    flexDirection: 'row',
+    top: 0,
+    left: 0,
+    right: 0,
+    height: 260,
+  },
+  // Darkroom idle
+  darkroom: {
+    flex: 1,
     alignItems: 'center',
     justifyContent: 'space-between',
+    paddingHorizontal: 26,
   },
-  flashBtn: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: Colors.glassDark,
+  darkroomHeart: {
     alignItems: 'center',
-    justifyContent: 'center',
+    marginTop: 14,
   },
-  liveFilterName: {
-    position: 'absolute',
-    bottom: 14,
-    alignSelf: 'center',
-    fontFamily: Fonts.hand,
-    fontSize: 22,
-    color: Colors.paper,
-    textShadowColor: 'rgba(0,0,0,0.6)',
-    textShadowRadius: 4,
+  darkroomLabel: {
+    ...Typography.label,
+    letterSpacing: 3,
+    marginTop: 6,
   },
-  bottomBar: {
-    backgroundColor: Colors.ink,
-    paddingTop: 8,
+  darkroomTitle: {
+    fontFamily: Fonts.serifItalic,
+    fontSize: 24,
+    lineHeight: 33,
+    color: Colors.textOnInk,
+    textAlign: 'center',
+    marginTop: 10,
+    maxWidth: 300,
   },
-  controls: {
+  actionsCol: {
+    alignSelf: 'stretch',
+    gap: 14,
+  },
+  actionCard: {
+    alignSelf: 'stretch',
+  },
+  actionInner: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-around',
-    paddingHorizontal: 30,
-    paddingTop: 6,
+    gap: 16,
   },
-  sideBtn: {
-    width: 54,
-    height: 54,
-    borderRadius: 27,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: Colors.inkLight,
-    borderWidth: 1,
-    borderColor: Colors.separator,
-  },
-  shutterOuter: {
-    width: 76,
-    height: 76,
-    borderRadius: 18,
+  actionIconGold: {
+    width: 46,
+    height: 46,
+    borderRadius: 14,
     backgroundColor: Colors.gold,
     alignItems: 'center',
     justifyContent: 'center',
-    borderWidth: 4,
-    borderColor: Colors.paper,
   },
-  shutterDisabled: {
-    opacity: 0.4,
+  actionIconGhost: {
+    width: 46,
+    height: 46,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: Colors.goldBorder,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  // Preview mode
-  previewHeader: {
+  actionTextWrap: {
+    flex: 1,
+  },
+  actionTitle: {
+    fontFamily: Fonts.serifBold,
+    fontSize: 19,
+    color: Colors.textOnInk,
+  },
+  actionSub: {
+    ...Typography.bodyMuted,
+    marginTop: 2,
+  },
+  permissionNote: {
+    ...Typography.bodyMuted,
+    color: Colors.coral,
+    textAlign: 'center',
+    marginTop: 4,
+    lineHeight: 19,
+  },
+  footerHint: {
+    fontFamily: Fonts.hand,
+    fontSize: 17,
+    color: Colors.textMuted,
+    textAlign: 'center',
+  },
+  // Development room
+  devHeader: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: 16,
-    height: 48,
+    marginBottom: 8,
   },
   headerBtn: {
     width: 40,
@@ -648,19 +583,26 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  headerTitle: {
-    fontFamily: Fonts.serifBold,
-    fontSize: 18,
-    color: Colors.textOnInk,
-  },
-  previewArea: {
+  devTitleWrap: {
     alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingTop: 4,
   },
-  editControls: {
-    flex: 1,
-    justifyContent: 'flex-end',
+  devLabel: {
+    ...Typography.label,
+    fontSize: 9,
+    letterSpacing: 2.5,
+  },
+  devTitle: {
+    fontFamily: Fonts.serifItalic,
+    fontSize: 16,
+    color: Colors.gold,
+    marginTop: 1,
+  },
+  devPhotoWrap: {
+    alignItems: 'center',
+    paddingHorizontal: 18,
+  },
+  devControls: {
+    marginTop: 14,
   },
   sliderRow: {
     flexDirection: 'row',
@@ -668,9 +610,6 @@ const styles = StyleSheet.create({
     gap: 12,
     paddingHorizontal: 24,
     marginTop: 2,
-  },
-  sliderFlex: {
-    flex: 1,
   },
   sliderPct: {
     fontFamily: Fonts.serif,
@@ -715,9 +654,6 @@ const styles = StyleSheet.create({
     gap: 12,
     paddingHorizontal: 20,
     paddingTop: 18,
-  },
-  actionBtn: {
-    flex: 1,
   },
   savingOverlay: {
     ...StyleSheet.absoluteFillObject,
