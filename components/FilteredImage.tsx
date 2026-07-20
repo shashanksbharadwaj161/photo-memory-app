@@ -3,6 +3,7 @@ import {
   Image,
   StyleSheet,
   View,
+  Text,
   StyleProp,
   ViewStyle,
   ImageResizeMode,
@@ -12,8 +13,10 @@ import { ColorMatrix, Matrix } from 'react-native-color-matrix-image-filters';
 import { FilterDefinition, getFilterById } from '@/constants/filters';
 import { matrixForFilter } from '@/lib/filters';
 import { Colors } from '@/constants/colors';
+import { Fonts } from '@/constants/fonts';
 import { GrainOverlay } from './GrainOverlay';
 import { Vignette } from './Vignette';
+import { BreathingDot } from './BreathingDot';
 
 interface FilteredImageProps {
   uri: string;
@@ -32,6 +35,8 @@ interface FilteredImageProps {
    * is looked up in the built-in FILTERS list as before.
    */
   filter?: FilterDefinition;
+  /** Shown on the placeholder if the image fails to load. */
+  caption?: string;
 }
 
 /**
@@ -49,9 +54,14 @@ export function FilteredImage({
   grain = true,
   vignette = true,
   filter: filterOverride,
+  caption,
 }: FilteredImageProps) {
   const [failed, setFailed] = useState(false);
-  useEffect(() => setFailed(false), [uri]);
+  const [loading, setLoading] = useState(true);
+  useEffect(() => {
+    setFailed(false);
+    setLoading(true);
+  }, [uri]);
   const filter = filterOverride ?? getFilterById(filterId);
   const clamped = Math.max(0, Math.min(1, intensity));
   const identity = filter.id === 'none' || clamped <= 0;
@@ -62,7 +72,11 @@ export function FilteredImage({
       source={{ uri }}
       resizeMode={resizeMode}
       style={styles.fill}
-      onError={() => setFailed(true)}
+      onLoadEnd={() => setLoading(false)}
+      onError={() => {
+        setFailed(true);
+        setLoading(false);
+      }}
     />
   );
 
@@ -72,7 +86,16 @@ export function FilteredImage({
     <View style={[styles.container, { borderRadius: radius }, style]}>
       {showPlaceholder ? (
         <View style={[styles.fill, styles.placeholder]}>
-          {failed && <Ionicons name="image-outline" size={28} color={Colors.textMuted} />}
+          {failed && (
+            <>
+              <Ionicons name="image-outline" size={28} color={Colors.textMuted} />
+              {!!caption && (
+                <Text style={styles.placeholderCaption} numberOfLines={2}>
+                  {caption}
+                </Text>
+              )}
+            </>
+          )}
         </View>
       ) : identity ? (
         image
@@ -82,8 +105,14 @@ export function FilteredImage({
         </ColorMatrix>
       )}
 
-      {grain && <GrainOverlay opacity={filter.grainOpacity * clamped} />}
-      {vignette && (
+      {!showPlaceholder && loading && (
+        <View style={[styles.fill, styles.loadingOverlay]} pointerEvents="none">
+          <BreathingDot />
+        </View>
+      )}
+
+      {!showPlaceholder && grain && <GrainOverlay opacity={filter.grainOpacity * clamped} />}
+      {!showPlaceholder && vignette && (
         <Vignette color={filter.vignetteColor} opacity={filter.vignetteOpacity * clamped} />
       )}
     </View>
@@ -101,6 +130,19 @@ const styles = StyleSheet.create({
     height: '100%',
   },
   placeholder: {
+    backgroundColor: Colors.inkLight,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 16,
+    gap: 8,
+  },
+  placeholderCaption: {
+    fontFamily: Fonts.hand,
+    fontSize: 16,
+    color: Colors.textMuted,
+    textAlign: 'center',
+  },
+  loadingOverlay: {
     backgroundColor: Colors.inkLight,
     alignItems: 'center',
     justifyContent: 'center',

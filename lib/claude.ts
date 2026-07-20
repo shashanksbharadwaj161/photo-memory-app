@@ -5,7 +5,10 @@ const CLAUDE_ENABLED_STORAGE = 'locket_claude_enabled';
 const CAPTION_HISTORY_STORAGE = 'locket_caption_history';
 
 export async function saveClaudeApiKey(key: string): Promise<void> {
-  await AsyncStorage.setItem(CLAUDE_API_KEY_STORAGE, key.trim());
+  const trimmed = key.trim();
+  await AsyncStorage.setItem(CLAUDE_API_KEY_STORAGE, trimmed);
+  const verify = await AsyncStorage.getItem(CLAUDE_API_KEY_STORAGE);
+  console.log('[claude] saveClaudeApiKey:', verify === trimmed ? 'confirmed saved' : 'MISMATCH — save may have failed');
 }
 export async function clearClaudeApiKey(): Promise<void> {
   await AsyncStorage.multiRemove([CLAUDE_API_KEY_STORAGE, CLAUDE_ENABLED_STORAGE]);

@@ -40,20 +40,9 @@ export interface UploadOptions {
   publicId?: string;
 }
 
-/**
- * Upload a local image to Cloudinary via an unsigned upload preset (no
- * server or API secret required) and return its public `secure_url`.
- */
-export async function uploadImageAsync(
-  localUri: string,
-  options: UploadOptions = {}
-): Promise<string> {
-  if (!isCloudinaryConfigured) {
-    throw new Error(
-      'Cloudinary is not configured — paste your cloud name and upload preset into lib/storage.ts.'
-    );
-  }
+const UPLOAD_TIMEOUT_MS = 30000;
 
+async function attemptUpload(localUri: string, options: UploadOptions): Promise<string> {
   const filename = localUri.split('/').pop() || `photo_${Date.now()}.jpg`;
 
   const form = new FormData();
@@ -67,10 +56,24 @@ export async function uploadImageAsync(
   if (options.folder) form.append('folder', options.folder);
   if (options.publicId) form.append('public_id', options.publicId);
 
-  const response = await fetch(uploadUrl(), {
-    method: 'POST',
-    body: form,
-  });
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), UPLOAD_TIMEOUT_MS);
+
+  let response: Response;
+  try {
+    response = await fetch(uploadUrl(), {
+      method: 'POST',
+      body: form,
+      signal: controller.signal,
+    });
+  } catch (err) {
+    if ((err as { name?: string })?.name === 'AbortError') {
+      throw new Error('The upload timed out. Check your connection and try again.');
+    }
+    throw err;
+  } finally {
+    clearTimeout(timeout);
+  }
 
   const data = (await response.json().catch(() => ({}))) as CloudinaryUploadResponse;
 
@@ -79,6 +82,31 @@ export async function uploadImageAsync(
   }
 
   return data.secure_url;
+}
+
+/**
+ * Upload a local image to Cloudinary via an unsigned upload preset (no
+ * server or API secret required) and return its public `secure_url`.
+ *
+ * Each attempt is capped at 30s via AbortController; a single failed
+ * attempt (timeout, network blip, transient 5xx) is retried once before
+ * giving up.
+ */
+export async function uploadImageAsync(
+  localUri: string,
+  options: UploadOptions = {}
+): Promise<string> {
+  if (!isCloudinaryConfigured) {
+    throw new Error(
+      'Cloudinary is not configured — paste your cloud name and upload preset into lib/storage.ts.'
+    );
+  }
+
+  try {
+    return await attemptUpload(localUri, options);
+  } catch {
+    return await attemptUpload(localUri, options);
+  }
 }
 
 /** Build a deterministic Cloudinary folder for a book's photos. */

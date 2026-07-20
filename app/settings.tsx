@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -69,6 +69,8 @@ export default function SettingsScreen() {
   const [claudeEnabled, setClaudeEnabledState] = useState(false);
   const [apiKey, setApiKey] = useState('');
   const [keyError, setKeyError] = useState(false);
+  const [keySaved, setKeySaved] = useState(false);
+  const keySavedTimer = useRef<ReturnType<typeof setTimeout>>();
 
   // Ambient mode + quiet sound
   const [ambientMs, setAmbientMs] = useState(45000);
@@ -144,6 +146,20 @@ export default function SettingsScreen() {
     setClaudeEnabled(v).catch(() => {});
   };
 
+  const flashKeySaved = () => {
+    setKeySaved(true);
+    if (keySavedTimer.current) clearTimeout(keySavedTimer.current);
+    keySavedTimer.current = setTimeout(() => setKeySaved(false), 1500);
+  };
+
+  const onChangeApiKey = (t: string) => {
+    setApiKey(t);
+    setKeyError(false);
+    if (t.trim()) {
+      saveClaudeApiKey(t).then(flashKeySaved).catch(() => {});
+    }
+  };
+
   const commitApiKey = () => {
     const trimmed = apiKey.trim();
     if (!trimmed) {
@@ -152,7 +168,7 @@ export default function SettingsScreen() {
     }
     if (isValidClaudeKey(trimmed)) {
       setKeyError(false);
-      saveClaudeApiKey(trimmed).catch(() => {});
+      saveClaudeApiKey(trimmed).then(flashKeySaved).catch(() => {});
     } else {
       setKeyError(true);
     }
@@ -161,6 +177,7 @@ export default function SettingsScreen() {
   const doClearKey = () => {
     setApiKey('');
     setKeyError(false);
+    setKeySaved(false);
     setClaudeEnabledState(false);
     clearClaudeApiKey().catch(() => {});
   };
@@ -379,19 +396,23 @@ export default function SettingsScreen() {
             <View style={styles.claudeBlock}>
               <View style={styles.claudeKeyHeader}>
                 <Text style={styles.fieldLabel}>API key</Text>
-                {keyIsValid && (
+                {keySaved ? (
                   <View style={styles.connectedRow}>
                     <View style={styles.connectedDot} />
-                    <Text style={styles.connectedText}>Connected</Text>
+                    <Text style={styles.connectedText}>Saved ✓</Text>
                   </View>
+                ) : (
+                  keyIsValid && (
+                    <View style={styles.connectedRow}>
+                      <View style={styles.connectedDot} />
+                      <Text style={styles.connectedText}>Connected</Text>
+                    </View>
+                  )
                 )}
               </View>
               <TextInput
                 value={apiKey}
-                onChangeText={(t) => {
-                  setApiKey(t);
-                  setKeyError(false);
-                }}
+                onChangeText={onChangeApiKey}
                 onBlur={commitApiKey}
                 onEndEditing={commitApiKey}
                 placeholder="sk-ant-…"

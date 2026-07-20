@@ -147,6 +147,7 @@ export default function BookScreen() {
   const [timeLocks, setTimeLocks] = useState<TimeLock[]>([]);
   const [letters, setLetters] = useState<FutureLetter[]>([]);
   const [ambientVisible, setAmbientVisible] = useState(false);
+  const [loadTimedOut, setLoadTimedOut] = useState(false);
 
   const scrollX = useSharedValue(0);
   const onScroll = useAnimatedScrollHandler((e) => {
@@ -160,6 +161,17 @@ export default function BookScreen() {
   useEffect(() => {
     if (bookId) registerMemoryTask(bookId, partner?.name ?? 'your partner');
   }, [bookId, partner?.name]);
+
+  // Never let a stuck sync leave the screen blank — cap the wait at 10s and
+  // fall through to the empty state so there's always something to act on.
+  useEffect(() => {
+    if (!loading) {
+      setLoadTimedOut(false);
+      return;
+    }
+    const t = setTimeout(() => setLoadTimedOut(true), 10000);
+    return () => clearTimeout(t);
+  }, [loading, bookId]);
 
   // Time-locked capsules and letters, streamed live.
   useEffect(() => {
@@ -357,7 +369,7 @@ export default function BookScreen() {
   );
 
   // ── Loading ────────────────────────────────────────────────
-  if (loading && pageItems.length === 0) {
+  if (loading && pageItems.length === 0 && !loadTimedOut) {
     return (
       <View style={styles.root} onTouchStart={() => recordInteraction()}>
         <RadialBackdrop seasonTint={seasonTheme.tint} />
@@ -383,7 +395,18 @@ export default function BookScreen() {
           <Text style={styles.emptyTitle}>Your story starts here</Text>
           <Text style={styles.emptySub}>Take your first photo together</Text>
         </Animated.View>
-        {error && <ErrorBar message={error} onRetry={retry} bottomInset={insets.bottom + 20} />}
+        {error ? (
+          <ErrorBar message={error} onRetry={retry} bottomInset={insets.bottom + 20} />
+        ) : (
+          loadTimedOut &&
+          loading && (
+            <ErrorBar
+              message="Taking longer than usual to sync"
+              onRetry={retry}
+              bottomInset={insets.bottom + 20}
+            />
+          )
+        )}
       </View>
     );
   }

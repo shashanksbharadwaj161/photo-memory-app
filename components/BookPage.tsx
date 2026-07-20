@@ -95,6 +95,7 @@ export function BookPage({
             intensity={photo.intensity}
             filter={resolvePhotoFilter(photo.filterId, photo.filterSnapshot)}
             radius={4}
+            caption={photo.caption}
             style={{ width: '100%', height: photoHeight }}
           />
           {photo.isPostcard && (
